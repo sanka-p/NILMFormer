@@ -1,5 +1,7 @@
 #!/usr/bin bash
 
+trap 'echo "Interrupted — stopping all experiments."; kill -- -$$; exit 1' INT TERM
+
 # Global parameters
 declare -a SEEDS=(0 1 2)
 
@@ -28,6 +30,11 @@ run_batch() {
       for win in "${arr_windows[@]}"; do
         for model in "${arr_models[@]}"; do
           for seed in "${SEEDS[@]}"; do
+            result_file="result/${dataset}_${appliance}_1min/${win}/${model}_${seed}.pt"
+            if [ -f "$result_file" ]; then
+              echo "Skipping (already done): $result_file"
+              continue
+            fi
             echo "Running: uv run -m scripts.run_one_expe \
               --dataset $dataset \
               --sampling_rate 1min \
