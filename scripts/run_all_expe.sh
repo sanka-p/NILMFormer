@@ -1,6 +1,8 @@
 #!/usr/bin bash
 
-trap 'echo "Interrupted — stopping all experiments."; kill -- -$$; exit 1' INT TERM
+_STOP=0
+_CHILD_PID=""
+trap '_STOP=1; [ -n "$_CHILD_PID" ] && kill "$_CHILD_PID" 2>/dev/null; echo "Interrupted — stopping experiments."' INT TERM
 
 # Global parameters
 declare -a SEEDS=(0 1 2)
@@ -19,37 +21,30 @@ declare -a MODELS_2=("ConvNet" "ResNet" "Inception")
 declare -a WINDOW_SIZES_2=("day" "week" "month")
 
 # Run experiments
+# Data is processed once per (dataset, appliance, window, seed); models loop inside Python.
 run_batch() {
   local -n arr_datasets=$1
   local -n arr_appliances=$2
-  local -n arr_models=$3
-  local -n arr_windows=$4
+  local -n arr_windows=$3
+  local model_group=$4
 
   for dataset in "${arr_datasets[@]}"; do
     for appliance in "${arr_appliances[@]}"; do
       for win in "${arr_windows[@]}"; do
-        for model in "${arr_models[@]}"; do
-          for seed in "${SEEDS[@]}"; do
-            result_file="result/${dataset}_${appliance}_1min/${win}/${model}_${seed}.pt"
-            if [ -f "$result_file" ]; then
-              echo "Skipping (already done): $result_file"
-              continue
-            fi
-            echo "Running: uv run -m scripts.run_one_expe \
-              --dataset $dataset \
-              --sampling_rate 1min \
-              --appliance $appliance \
-              --window_size $win \
-              --name_model $model \
-              --seed $seed"
-            uv run -m scripts.run_one_expe \
-              --dataset "$dataset" \
-              --sampling_rate "1min" \
-              --appliance "$appliance" \
-              --window_size "$win" \
-              --name_model "$model" \
-              --seed "$seed"
-          done
+        for seed in "${SEEDS[@]}"; do
+          [ "$_STOP" -eq 1 ] && return 1
+          echo "Running group: dataset=$dataset appliance=$appliance win=$win seed=$seed group=$model_group"
+          uv run -m scripts.run_group_expe \
+            --dataset "$dataset" \
+            --sampling_rate "1min" \
+            --appliance "$appliance" \
+            --window_size "$win" \
+            --seed "$seed" \
+            --model_group "$model_group" &
+          _CHILD_PID=$!
+          wait "$_CHILD_PID"
+          _CHILD_PID=""
+          [ "$_STOP" -eq 1 ] && return 1
         done
       done
     done
@@ -59,7 +54,7 @@ run_batch() {
 #####################################
 # Run all possible experiments
 #####################################
-run_batch DATASETS_1 APPLIANCES_1 MODELS_1 WINDOW_SIZES_1
-run_batch DATASETS_1 APPLIANCES_1 MODELS_2 WINDOW_SIZES_2
-run_batch DATASETS_2 APPLIANCES_2 MODELS_1 WINDOW_SIZES_1
-run_batch DATASETS_2 APPLIANCES_2 MODELS_2 WINDOW_SIZES_2
+run_batch DATASETS_1 APPLIANCES_1 WINDOW_SIZES_1 nilm || return 1 2>/dev/null || exit 1
+run_batch DATASETS_1 APPLIANCES_1 WINDOW_SIZES_2 tser || return 1 2>/dev/null || exit 1
+run_batch DATASETS_2 APPLIANCES_2 WINDOW_SIZES_1 nilm || return 1 2>/dev/null || exit 1
+run_batch DATASETS_2 APPLIANCES_2 WINDOW_SIZES_2 tser || return 1 2>/dev/null || exit 1
