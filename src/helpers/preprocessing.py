@@ -1055,7 +1055,7 @@ class REFIT_DataBuilder(object):
         """
         file = self.data_path + "CLEAN_House" + str(indice) + ".csv"
         self._check_if_file_exist(file)
-        labels_houses = pd.read_csv(self.data_path + "HOUSES_Labels").set_index(
+        labels_houses = pd.read_csv(self.data_path + "HOUSE_Labels").set_index(
             "House_id"
         )
 
