@@ -4,6 +4,7 @@ import yaml
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+from tqdm import tqdm
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -42,11 +43,23 @@ def plot_sample(agg, app_power, app_state, title, out_path):
 
 
 def save_split(data, split_name, dataset_name, appliance, st_date=None):
-    out_dir = os.path.join(OUT_BASE, f"{dataset_name}_{appliance}", split_name)
-    create_dir(out_dir)
+    base_dir = os.path.join(OUT_BASE, f"{dataset_name}_{appliance}", split_name)
+    create_dir(base_dir)
     n = len(data)
-    print(f"  {split_name}: {n} samples → {out_dir}")
-    for i in range(n):
+    house_counters = {}
+    skipped = 0
+    pbar = tqdm(range(n), desc=f"{dataset_name}/{appliance}/{split_name}", unit="sample")
+    for i in pbar:
+        house_id = st_date.index[i] if st_date is not None else "unknown"
+        house_dir = os.path.join(base_dir, f"house_{house_id}")
+        create_dir(house_dir)
+        j = house_counters.get(house_id, 0)
+        out_path = os.path.join(house_dir, f"sample_{j:05d}.png")
+        house_counters[house_id] = j + 1
+        if os.path.exists(out_path):
+            skipped += 1
+            pbar.set_postfix(skipped=skipped)
+            continue
         agg = data[i, 0, 0, :]
         app_power = data[i, 1, 0, :]
         app_state = data[i, 1, 1, :]
@@ -56,8 +69,7 @@ def save_split(data, split_name, dataset_name, appliance, st_date=None):
                 date_str = f" | {st_date.iloc[i].values[0]}"
             except Exception:
                 pass
-        title = f"{dataset_name} | {appliance} | {split_name} | sample {i:05d}{date_str}"
-        out_path = os.path.join(out_dir, f"sample_{i:05d}.png")
+        title = f"{dataset_name} | {appliance} | {split_name} | house {house_id} | sample {j:05d}{date_str}"
         plot_sample(agg, app_power, app_state, title, out_path)
 
 
