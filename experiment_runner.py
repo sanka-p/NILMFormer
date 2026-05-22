@@ -214,8 +214,10 @@ def _(
     ]
 
     _project_root = pathlib.Path(__file__).parent
+    _env = os.environ.copy()
+    _env["PYTHONPATH"] = str(_project_root) + os.pathsep + _env.get("PYTHONPATH", "")
     with open(_log_file, "w") as _f:
-        _proc = subprocess.run(_cmd, stdout=_f, stderr=subprocess.STDOUT, text=True, cwd=_project_root)
+        _proc = subprocess.run(_cmd, stdout=_f, stderr=subprocess.STDOUT, text=True, cwd=_project_root, env=_env)
 
     if _proc.returncode == 0:
         mo.output.replace(mo.md(f"**✓ Training complete!** `{_appliance} / {_model} / seed={_seed} / win={_window}`\n\nLog saved to `{_log_file}`"))
