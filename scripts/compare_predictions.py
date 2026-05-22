@@ -78,7 +78,6 @@ def _(
     UKDALE_DataBuilder,
     glob,
     io,
-    load_btn,
     mo,
     np,
     os,
@@ -86,7 +85,7 @@ def _(
     split_train_test_pdl_nilmdataset,
     torch,
 ):
-    def _load_test_data(dataset, app_cfg, data_path, sr, ws, seed):
+    def load_test_data(dataset, app_cfg, data_path, sr, ws, seed):
         if dataset == "UKDALE":
             builder = UKDALE_DataBuilder(
                 data_path=f"{data_path}UKDALE/",
@@ -112,7 +111,7 @@ def _(
             )
         return data_test
 
-    def _find_good_window(data_test):
+    def find_good_window(data_test):
         activity = data_test[:, 1, 1, :].mean(axis=1)
         power_sum = data_test[:, 1, 0, :].sum(axis=1)
         candidates = np.where(activity > 0.3)[0]
@@ -120,7 +119,7 @@ def _(
             candidates = np.arange(len(data_test))
         return int(candidates[np.argmax(power_sum[candidates])])
 
-    def _load_predictions(result_path, dataset, appliance_key, sr, ws, seed):
+    def load_predictions(result_path, dataset, appliance_key, sr, ws, seed):
         ckpt_dir = os.path.join(result_path, f"{dataset}_{appliance_key}_{sr}", str(ws))
         predictions = {}
         if not os.path.isdir(ckpt_dir):
@@ -136,7 +135,7 @@ def _(
                 pass
         return predictions
 
-    def _make_figure(agg, gt_power, gt_state, predictions, good_idx, app_name, sr):
+    def make_figure(agg, gt_power, gt_state, predictions, good_idx, app_name, sr):
         sr_seconds = {"10s": 10, "1min": 60, "10min": 600, "30min": 1800}.get(sr, 60)
         t = np.arange(len(agg)) * sr_seconds
 
@@ -169,32 +168,26 @@ def _(
         plt.tight_layout()
         return fig
 
-    def _fig_to_image(fig):
+    def fig_to_image(fig):
         buf = io.BytesIO()
         fig.savefig(buf, format="png", dpi=110, bbox_inches="tight")
         plt.close(fig)
         buf.seek(0)
         return mo.image(src=buf.read())
 
-    return (
-        _fig_to_image,
-        _find_good_window,
-        _load_predictions,
-        _load_test_data,
-        _make_figure,
-    )
+    return fig_to_image, find_good_window, load_predictions, load_test_data, make_figure
 
 
 @app.cell
 def _(
-    _fig_to_image,
-    _find_good_window,
-    _load_predictions,
-    _load_test_data,
-    _make_figure,
     data_path_input,
     dataset_dd,
+    fig_to_image,
+    find_good_window,
     load_btn,
+    load_predictions,
+    load_test_data,
+    make_figure,
     mo,
     os,
     result_path_input,
@@ -222,7 +215,7 @@ def _(
     for _app_key, _app_cfg in _appliances_cfg.items():
         _app_name = _app_cfg["app"].strip()
         try:
-            _data_test = _load_test_data(_dataset, _app_cfg, _data_path, _sr, _ws, _seed)
+            _data_test = load_test_data(_dataset, _app_cfg, _data_path, _sr, _ws, _seed)
         except Exception as _e:
             _tabs[_app_key] = mo.md(f"**Error loading data:** {_e}")
             continue
@@ -231,15 +224,15 @@ def _(
             _tabs[_app_key] = mo.md(f"No test data for **{_app_name}**.")
             continue
 
-        _predictions = _load_predictions(
+        _predictions = load_predictions(
             _result_path, _dataset, _app_key, _sr, _ws, _seed
         )
-        _good_idx = _find_good_window(_data_test)
+        _good_idx = find_good_window(_data_test)
         _agg = _data_test[_good_idx, 0, 0, :]
         _gt_power = _data_test[_good_idx, 1, 0, :]
         _gt_state = _data_test[_good_idx, 1, 1, :]
 
-        _fig = _make_figure(
+        _fig = make_figure(
             _agg, _gt_power, _gt_state, _predictions, _good_idx, _app_name, _sr
         )
         _n_models = len(_predictions)
@@ -248,7 +241,7 @@ def _(
             if _n_models
             else mo.md(f"Window {_good_idx} · no checkpoints found at `{_result_path}`")
         )
-        _tabs[_app_key] = mo.vstack([_fig_to_image(_fig), _caption])
+        _tabs[_app_key] = mo.vstack([fig_to_image(_fig), _caption])
 
     mo.ui.tabs(_tabs)
     return
