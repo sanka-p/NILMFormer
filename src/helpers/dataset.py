@@ -219,11 +219,11 @@ class NILMscaler:
         if torch.is_tensor(data):
             rescale_data = data.clone()
             if len(rescale_data.shape) == 2:
-                rescale_data = rescale_data.unsqueeze(0)
+                rescale_data = rescale_data.unsqueeze(1)
         else:
             rescale_data = data.copy()
             if len(rescale_data.shape) == 2:
-                rescale_data = np.expand_dims(rescale_data, axis=0)
+                rescale_data = np.expand_dims(rescale_data, axis=1)
 
         assert self.appliance_scaling_type is not None, (
             "Original data : no scaling apply on appliance channels!"
@@ -251,11 +251,11 @@ class NILMscaler:
         if torch.is_tensor(data):
             rescale_data = data.clone()
             if len(rescale_data.shape) == 2:
-                rescale_data = rescale_data.unsqueeze(0)
+                rescale_data = rescale_data.unsqueeze(1)
         else:
             rescale_data = data.copy()
             if len(rescale_data.shape) == 2:
-                rescale_data = np.expand_dims(rescale_data, axis=0)
+                rescale_data = np.expand_dims(rescale_data, axis=1)
 
         if self.appliance_scaling_type == "MinMax" or (
             self.appliance_scaling_type == "SameAsPower"

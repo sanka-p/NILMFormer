@@ -365,7 +365,7 @@ class SeqToSeqTrainer:
             self.log[mask + "_yhat"] = y_hat
 
             if y_hat_win.size:
-                self.log[mask + "_yhat_win"] = y_hat
+                self.log[mask + "_yhat_win"] = y_hat_win
 
         if self.save_checkpoint:
             self.save()

@@ -129,7 +129,7 @@ def _(
 
     mo.vstack([
         mo.md(f"**Progress: {_done}/{_total}** experiments complete in current filter"),
-        mo.ui.table(_df, sortable=True, filterable=False),
+        mo.ui.table(_df),
     ])
     return
 

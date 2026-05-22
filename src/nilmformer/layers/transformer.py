@@ -11,7 +11,11 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import xformers.ops as xops
+try:
+    import xformers.ops as xops
+    _XFORMERS_AVAILABLE = True
+except ImportError:
+    _XFORMERS_AVAILABLE = False
 
 from typing import Any
 
@@ -72,7 +76,7 @@ class DiagonnalyMaskedSelfAttention(nn.Module):
 
         diag_mask = DiagonalMaskFromSeqlen(batch, seqlen, device=xq.device) # [B, 1, L, L]
 
-        if self.use_efficient_attention:
+        if self.use_efficient_attention and _XFORMERS_AVAILABLE:
             output = xops.memory_efficient_attention(
                 xq,
                 xk,
