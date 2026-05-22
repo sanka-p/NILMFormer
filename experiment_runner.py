@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.10.0"
+__generated_with = "0.23.5"
 app = marimo.App(width="wide")
 
 
@@ -14,6 +14,7 @@ def _():
     import torch
     import polars as pl
     import altair as alt
+
     return alt, mo, os, pathlib, pl, subprocess, sys, torch
 
 
@@ -62,7 +63,9 @@ def _(DATASET, SAMPLING_RATE, os, pathlib):
 
 @app.cell
 def _(mo):
-    mo.md("# NILMFormer Experiment Runner")
+    mo.md("""
+    # NILMFormer Experiment Runner
+    """)
     return
 
 
@@ -102,7 +105,14 @@ def _(APPLIANCES, MODELS, mo):
 
 
 @app.cell
-def _(experiment_matrix, filter_appliance, filter_model, filter_status, mo, pl):
+def _(
+    experiment_matrix,
+    filter_appliance,
+    filter_model,
+    filter_status,
+    mo,
+    pl,
+):
     _df = pl.DataFrame(experiment_matrix)
 
     if filter_appliance.value != "All":
@@ -126,7 +136,9 @@ def _(experiment_matrix, filter_appliance, filter_model, filter_status, mo, pl):
 
 @app.cell
 def _(mo):
-    mo.md("## Run Experiment")
+    mo.md("""
+    ## Run Experiment
+    """)
     return
 
 
@@ -156,7 +168,18 @@ def _(mo):
 
 
 @app.cell
-def _(DATASET, SAMPLING_RATE, experiment_selector, is_trained, log_path, mo, os, run_btn, subprocess, sys):
+def _(
+    DATASET,
+    SAMPLING_RATE,
+    experiment_selector,
+    is_trained,
+    log_path,
+    mo,
+    os,
+    run_btn,
+    subprocess,
+    sys,
+):
     mo.stop(
         not run_btn.value,
         mo.md("*Select an experiment above and click **▶ Run Selected Experiment** to start training.*"),
@@ -194,15 +217,17 @@ def _(DATASET, SAMPLING_RATE, experiment_selector, is_trained, log_path, mo, os,
         _proc = subprocess.run(_cmd, stdout=_f, stderr=subprocess.STDOUT, text=True)
 
     if _proc.returncode == 0:
-        mo.md(f"**✓ Training complete!** `{_appliance} / {_model} / seed={_seed} / win={_window}`\n\nLog saved to `{_log_file}`")
+        mo.output.replace(mo.md(f"**✓ Training complete!** `{_appliance} / {_model} / seed={_seed} / win={_window}`\n\nLog saved to `{_log_file}`"))
     else:
-        mo.md(f"**✗ Training failed** (exit code {_proc.returncode})\n\nSee `{_log_file}` for details.")
+        mo.output.replace(mo.md(f"**✗ Training failed** (exit code {_proc.returncode})\n\nSee `{_log_file}` for details."))
     return
 
 
 @app.cell
 def _(mo):
-    mo.md("## Log Viewer")
+    mo.md("""
+    ## Log Viewer
+    """)
     return
 
 
@@ -245,20 +270,22 @@ def _(DATASET, SAMPLING_RATE, log_selector, mo):
     try:
         with open(_log_file) as _f:
             _content = _f.read()
-        mo.md(f"**`{_log_file}`**\n\n```\n{_content[-8000:]}\n```")
+        mo.output.replace(mo.md(f"**`{_log_file}`**\n\n```\n{_content[-8000:]}\n```"))
     except FileNotFoundError:
-        mo.md(f"*Log file not found: `{_log_file}`*")
+        mo.output.replace(mo.md(f"*Log file not found: `{_log_file}`*"))
     return
 
 
 @app.cell
 def _(mo):
-    mo.md("## Training Curves")
+    mo.md("""
+    ## Training Curves
+    """)
     return
 
 
 @app.cell
-def _(APPLIANCES, MODELS, SAMPLING_RATE, SEEDS, WINDOWS, is_trained, mo):
+def _(APPLIANCES, MODELS, SEEDS, WINDOWS, is_trained, mo):
     _trained = [
         f"{_a} / {_m} / seed={_s} / win={_w}"
         for _a in APPLIANCES

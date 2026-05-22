@@ -54,17 +54,19 @@ def _(mo):
     )
     window_size_num = mo.ui.number(value=128, label="Window size")
     seed_num = mo.ui.number(value=0, label="Seed")
+    n_windows_num = mo.ui.number(value=4, label="Windows to compare")
     load_btn = mo.ui.run_button(label="Load & Plot")
 
     mo.vstack([
         mo.hstack([result_path_input, data_path_input]),
-        mo.hstack([dataset_dd, sr_dd, window_size_num, seed_num]),
+        mo.hstack([dataset_dd, sr_dd, window_size_num, seed_num, n_windows_num]),
         load_btn,
     ])
     return (
         data_path_input,
         dataset_dd,
         load_btn,
+        n_windows_num,
         result_path_input,
         seed_num,
         sr_dd,
@@ -111,13 +113,14 @@ def _(
             )
         return data_test
 
-    def find_good_window(data_test):
+    def find_good_windows(data_test, n=4):
         activity = data_test[:, 1, 1, :].mean(axis=1)
         power_sum = data_test[:, 1, 0, :].sum(axis=1)
         candidates = np.where(activity > 0.3)[0]
         if len(candidates) == 0:
             candidates = np.arange(len(data_test))
-        return int(candidates[np.argmax(power_sum[candidates])])
+        sorted_candidates = candidates[np.argsort(power_sum[candidates])[::-1]]
+        return sorted_candidates[:n].tolist()
 
     def load_predictions(result_path, dataset, appliance_key, sr, ws, seed):
         ckpt_dir = os.path.join(result_path, f"{dataset}_{appliance_key}_{sr}", str(ws))
@@ -175,7 +178,7 @@ def _(
         buf.seek(0)
         return mo.image(src=buf.read())
 
-    return fig_to_image, find_good_window, load_predictions, load_test_data, make_figure
+    return fig_to_image, find_good_windows, load_predictions, load_test_data, make_figure
 
 
 @app.cell
@@ -183,12 +186,13 @@ def _(
     data_path_input,
     dataset_dd,
     fig_to_image,
-    find_good_window,
+    find_good_windows,
     load_btn,
     load_predictions,
     load_test_data,
     make_figure,
     mo,
+    n_windows_num,
     os,
     result_path_input,
     seed_num,
@@ -207,6 +211,7 @@ def _(
     _sr = sr_dd.value
     _ws = int(window_size_num.value)
     _seed = int(seed_num.value)
+    _n_windows = int(n_windows_num.value)
     _data_path = data_path_input.value
     _result_path = result_path_input.value
     _appliances_cfg = _datasets_cfg[_dataset]
@@ -227,21 +232,25 @@ def _(
         _predictions = load_predictions(
             _result_path, _dataset, _app_key, _sr, _ws, _seed
         )
-        _good_idx = find_good_window(_data_test)
-        _agg = _data_test[_good_idx, 0, 0, :]
-        _gt_power = _data_test[_good_idx, 1, 0, :]
-        _gt_state = _data_test[_good_idx, 1, 1, :]
-
-        _fig = make_figure(
-            _agg, _gt_power, _gt_state, _predictions, _good_idx, _app_name, _sr
-        )
         _n_models = len(_predictions)
-        _caption = (
-            mo.md(f"Window {_good_idx} · {_n_models} model(s) loaded")
-            if _n_models
-            else mo.md(f"Window {_good_idx} · no checkpoints found at `{_result_path}`")
-        )
-        _tabs[_app_key] = mo.vstack([fig_to_image(_fig), _caption])
+        _good_indices = find_good_windows(_data_test, n=_n_windows)
+
+        _panels = []
+        for _idx in _good_indices:
+            _agg = _data_test[_idx, 0, 0, :]
+            _gt_power = _data_test[_idx, 1, 0, :]
+            _gt_state = _data_test[_idx, 1, 1, :]
+            _fig = make_figure(
+                _agg, _gt_power, _gt_state, _predictions, _idx, _app_name, _sr
+            )
+            _caption = (
+                mo.md(f"Window {_idx} · {_n_models} model(s) loaded")
+                if _n_models
+                else mo.md(f"Window {_idx} · no checkpoints found at `{_result_path}`")
+            )
+            _panels.append(mo.vstack([fig_to_image(_fig), _caption]))
+
+        _tabs[_app_key] = mo.vstack(_panels)
 
     mo.ui.tabs(_tabs)
     return
