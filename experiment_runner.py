@@ -213,8 +213,9 @@ def _(
         "--seed", str(_seed),
     ]
 
+    _project_root = pathlib.Path(__file__).parent
     with open(_log_file, "w") as _f:
-        _proc = subprocess.run(_cmd, stdout=_f, stderr=subprocess.STDOUT, text=True)
+        _proc = subprocess.run(_cmd, stdout=_f, stderr=subprocess.STDOUT, text=True, cwd=_project_root)
 
     if _proc.returncode == 0:
         mo.output.replace(mo.md(f"**✓ Training complete!** `{_appliance} / {_model} / seed={_seed} / win={_window}`\n\nLog saved to `{_log_file}`"))
