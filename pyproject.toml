@@ -16,6 +16,7 @@ dependencies = [
     "pytorch-tcn>=1.0.0",
     "torch>=2.5.1",
     "xformers>=0.0.28.post3",
+    "marimo>=0.10.0",
 ]
 
 [dependency-groups]
