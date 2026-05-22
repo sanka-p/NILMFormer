@@ -1,13 +1,17 @@
 #!/bin/bash
 
 for appliance in "WashingMachine" "Dishwasher" "Kettle" "Microwave" "Fridge"; do
-    echo "Running experiment for $appliance..."
-    uv run -m scripts.run_one_expe \
-        --dataset "UKDALE" \
-        --sampling_rate "10s" \
-        --appliance "$appliance" \
-        --window_size 256 \
-        --name_model BERT4NILM \
-        --seed 2
-    echo "Done: $appliance"
+    for window_size in 128 256 512; do
+        for seed in 0 1 2; do
+            echo "Running experiment for $appliance ws=$window_size seed=$seed..."
+            uv run -m scripts.run_one_expe \
+                --dataset "UKDALE" \
+                --sampling_rate "10s" \
+                --appliance "$appliance" \
+                --window_size "$window_size" \
+                --name_model CNN1D \
+                --seed "$seed"
+            echo "Done: $appliance ws=$window_size seed=$seed"
+        done
+    done
 done
