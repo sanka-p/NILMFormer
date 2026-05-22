@@ -203,21 +203,26 @@ def _(
     _log_file = log_path(_appliance, _window, _model, _seed)
     os.makedirs(os.path.dirname(_log_file), exist_ok=True)
 
-    _cmd = [
-        sys.executable, "scripts/run_one_expe.py",
+    _project_root = pathlib.Path(__file__).parent
+    _args = " ".join([
+        "scripts/run_one_expe.py",
         "--dataset", DATASET,
         "--sampling_rate", SAMPLING_RATE,
         "--window_size", str(_window),
         "--appliance", _appliance,
         "--name_model", _model,
         "--seed", str(_seed),
-    ]
-
-    _project_root = pathlib.Path(__file__).parent
-    _env = os.environ.copy()
-    _env["PYTHONPATH"] = str(_project_root) + os.pathsep + _env.get("PYTHONPATH", "")
+    ])
+    _shell_cmd = (
+        f"source /opt/conda/etc/profile.d/conda.sh && "
+        f"conda activate {_project_root}/env && "
+        f"python {_args}"
+    )
     with open(_log_file, "w") as _f:
-        _proc = subprocess.run(_cmd, stdout=_f, stderr=subprocess.STDOUT, text=True, cwd=_project_root, env=_env)
+        _proc = subprocess.run(
+            ["bash", "-c", _shell_cmd],
+            stdout=_f, stderr=subprocess.STDOUT, text=True, cwd=_project_root,
+        )
 
     if _proc.returncode == 0:
         mo.output.replace(mo.md(f"**✓ Training complete!** `{_appliance} / {_model} / seed={_seed} / win={_window}`\n\nLog saved to `{_log_file}`"))
