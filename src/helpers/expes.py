@@ -171,11 +171,14 @@ def nilm_model_training(inst_model, tuple_data, scaler, expes_config):
         path_checkpoint=expes_config.result_path,
     )
 
-    logging.info("Model training...")
-    model_trainer.train(expes_config.epochs)
+    if expes_config.name_model == "TCN_KL":
+        logging.info("Skipping training (pretrained TCN_KL)")
+    else:
+        logging.info("Model training...")
+        model_trainer.train(expes_config.epochs)
+        model_trainer.restore_best_weights()
 
     logging.info("Eval model...")
-    model_trainer.restore_best_weights()
     model_trainer.evaluate(
         valid_loader,
         scaler=scaler,
@@ -294,12 +297,29 @@ def launch_models_training(data_tuple, scaler, expes_config):
     if "threshold" in expes_config.model_kwargs:
         expes_config.model_kwargs.threshold = expes_config.threshold
 
-    model_instance = get_model_instance(
-        name_model=expes_config.name_model,
-        c_in=(1 + 2 * len(expes_config.list_exo_variables)),
-        window_size=expes_config.window_size,
-        **expes_config.model_kwargs,
-    )
+    if expes_config.name_model == "TCN_KL":
+        from src.baselines.nilm.tcn_kl import load_pretrained, TCN_KL_NILMFormerAdapter
+        core, klf, meta = load_pretrained(
+            weights_path=expes_config.model_kwargs.weights_path,
+            meta_path=expes_config.model_kwargs.get("meta_path"),
+        )
+        model_instance = TCN_KL_NILMFormerAdapter(
+            core=core,
+            kl_filter=klf,
+            tcn_appliance_names=meta["appliance_names"],
+            tcn_average_powers=meta["average_powers"],
+            target_appliance=expes_config.app,
+            nilmformer_scaler=scaler,
+            appliance_name_map=dict(expes_config.model_kwargs.get("appliance_name_map") or {}),
+            input_norm_const=float(meta.get("input_norm_const", 5000.0)),
+        )
+    else:
+        model_instance = get_model_instance(
+            name_model=expes_config.name_model,
+            c_in=(1 + 2 * len(expes_config.list_exo_variables)),
+            window_size=expes_config.window_size,
+            **expes_config.model_kwargs,
+        )
 
     if expes_config.name_model in ["ConvNet", "ResNet", "Inception"]:
         tser_model_training(model_instance, data_tuple, scaler, expes_config)

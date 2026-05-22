@@ -13,6 +13,7 @@ dependencies = [
     "pandas>=2.2.3",
     "pyyaml>=6.0.2",
     "scikit-learn>=1.5.2",
+    "pytorch-tcn>=1.0.0",
     "torch>=2.5.1",
     "xformers>=0.0.28.post3",
 ]

@@ -178,3 +178,15 @@ NILMFormer:
     lr: !!float 1e-4
     wd: !!float 0
     training_in_model: false
+
+TCN_KL:
+  model_kwargs:
+    weights_path: "/abs/path/to/tcn.ckpt"
+    meta_path: null
+    appliance_name_map:
+      WashingMachine: Washingmachine
+      Fridge: Refrigerator
+  model_training_param:
+    lr: !!float 0.0
+    wd: !!float 0.0
+    training_in_model: false
