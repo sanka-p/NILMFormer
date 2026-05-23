@@ -676,7 +676,9 @@ class UKDALE_DataBuilder(object):
                 appl_data.columns = ["time", appliance]
                 appl_data["time"] = pd.to_datetime(appl_data["time"], unit="s")
                 appl_data = appl_data.set_index("time")
-                appl_data = appl_data.resample("10s").mean().ffill(limit=6)
+                appl_data = appl_data.resample("10s").mean()
+                appl_data[appliance] = self._fill_long_gaps_with_zero(appl_data[appliance])
+                appl_data = appl_data.ffill(limit=6)
                 appl_data[appl_data < 5] = 0  # Remove small value
 
                 # Merge aggregate load curve with appliance load curve
@@ -735,6 +737,16 @@ class UKDALE_DataBuilder(object):
                 house_data[appliance + "_status"] = 0
 
         return house_data
+
+    def _fill_long_gaps_with_zero(self, series, gap_threshold_steps=12):
+        """Fill NaN runs > 120s (12 × 10s steps) with 0.0 — silence means appliance OFF per Kelly & Knottenbelt."""
+        is_nan = series.isna()
+        nan_group = (is_nan != is_nan.shift()).cumsum()
+        nan_group_sizes = is_nan.groupby(nan_group).transform("sum")
+        long_gap_mask = is_nan & (nan_group_sizes > gap_threshold_steps)
+        series = series.copy()
+        series[long_gap_mask] = 0.0
+        return series
 
     def _check_appliance_names(self):
         """
