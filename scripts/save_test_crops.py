@@ -37,6 +37,21 @@ def to_long_df(data, st_date):
     })
 
 
+def print_summary(results, ukdale_cfg):
+    for (sr, ws), apps in results.items():
+        print(f"\nsr={sr}  ws={ws}")
+        print(f"{'Appliance':<20} {'Train Houses':<16} {'Valid Houses':<16} {'Test Houses':<14} {'Train N':>8} {'Valid N':>8} {'Test N':>8}")
+        print("-" * 92)
+        for app_key, entry in apps.items():
+            cfg = ukdale_cfg[app_key]
+            train_h = str(cfg["ind_house_train"])
+            valid_h = str(cfg.get("ind_house_valid", []))
+            test_h  = str(cfg["ind_house_test"])
+            print(f"{app_key:<20} {train_h:<16} {valid_h:<16} {test_h:<14}"
+                  f" {entry['n_train']:>8} {entry['n_valid']:>8} {entry['n_test']:>8}")
+    print()
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_path", default="data/")
@@ -44,6 +59,7 @@ def main():
     parser.add_argument("--sampling_rates", nargs="+", default=["10s"])
     parser.add_argument("--window_sizes", nargs="+", type=int, default=[128, 256, 512])
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--summary", action="store_true")
     args = parser.parse_args()
 
     with open("configs/datasets.yaml") as f:
@@ -51,11 +67,15 @@ def main():
 
     ukdale_cfg = datasets_cfg["UKDALE"]
 
+    results = {}
+
     for sr in args.sampling_rates:
         for ws in args.window_sizes:
+            results[(sr, ws)] = {}
             for app_key, app_cfg in ukdale_cfg.items():
                 tag = f"UKDALE_{app_key}_{sr}"
-                print(f"\n{tag} / ws={ws}")
+                if not args.summary:
+                    print(f"\n{tag} / ws={ws}")
 
                 builder = UKDALE_DataBuilder(
                     data_path=f"{args.data_path}/UKDALE/",
@@ -74,21 +94,38 @@ def main():
                     house_indicies=app_cfg["ind_house_test"]
                 )
 
-                print(f"  train: {len(data_train):>6} windows")
-                print(f"  valid: {len(data_valid):>6} windows")
-                print(f"  test:  {len(data_test):>6} windows")
+                results[(sr, ws)][app_key] = {
+                    "data_train": data_train, "st_train": st_train,
+                    "data_valid": data_valid, "st_valid": st_valid,
+                    "data_test":  data_test,  "st_test":  st_test,
+                    "n_train": len(data_train),
+                    "n_valid": len(data_valid),
+                    "n_test":  len(data_test),
+                    "tag": tag,
+                }
 
-                out_dir = create_dir(os.path.join(args.output_path, tag, str(ws)))
+                if not args.summary:
+                    print(f"  train: {len(data_train):>6} windows")
+                    print(f"  valid: {len(data_valid):>6} windows")
+                    print(f"  test:  {len(data_test):>6} windows")
 
-                splits = [
-                    ("train_data.csv", data_train, st_train),
-                    ("valid_data.csv", data_valid, st_valid),
-                    ("test_data.csv",  data_test,  st_test),
-                ]
-                for fname, data, st_date in splits:
-                    path = os.path.join(out_dir, fname)
-                    to_long_df(data, st_date).to_csv(path, index=False)
-                    print(f"  saved {fname}")
+    if args.summary:
+        print_summary(results, ukdale_cfg)
+
+    for (sr, ws), apps in results.items():
+        for app_key, entry in apps.items():
+            tag = entry["tag"]
+            out_dir = create_dir(os.path.join(args.output_path, tag, str(ws)))
+
+            splits = [
+                ("train_data.csv", entry["data_train"], entry["st_train"]),
+                ("valid_data.csv", entry["data_valid"], entry["st_valid"]),
+                ("test_data.csv",  entry["data_test"],  entry["st_test"]),
+            ]
+            for fname, data, st_date in splits:
+                path = os.path.join(out_dir, fname)
+                to_long_df(data, st_date).to_csv(path, index=False)
+                print(f"  saved {fname}")
 
 
 if __name__ == "__main__":
