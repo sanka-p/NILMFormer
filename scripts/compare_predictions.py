@@ -184,37 +184,56 @@ def _(
             return 1.0 / 1000.0, "Power (kW)"
         return 1.0, "Power (W)"
 
-    def _draw_panel(ax_full, ax_zoom, x, gt, pred, zoom_start, zoom_end,
+    def _draw_panel(ax, x, gt, pred, zoom_start, zoom_end,
                     ymax, scale, ylabel, title):
         n_pts = len(gt)
         gt_s = gt * scale
         pred_s = pred * scale
         ymax_s = ymax * scale
 
-        ax_full.plot(x, pred_s, color="#ff7f0e", lw=0.9, label="Prediction", zorder=2)
-        ax_full.plot(x, gt_s, color="#2ca02c", lw=0.9, label="Ground-Truth", zorder=3)
-        ax_full.axvspan(zoom_start, zoom_end, color="0.88", alpha=0.6, zorder=1, lw=0)
-        ax_full.set_xlim(0, n_pts - 1)
-        ax_full.set_ylim(0, ymax_s)
-        ax_full.set_xlabel("Sampling points")
-        ax_full.set_ylabel(ylabel)
-        ax_full.set_title(title, loc="left")
-        for spine in ax_full.spines.values():
+        ax.plot(x, pred_s, color="#ff7f0e", lw=0.9, label="Prediction", zorder=2)
+        ax.plot(x, gt_s, color="#2ca02c", lw=0.9, label="Ground-Truth", zorder=3)
+        ax.set_xlim(0, n_pts - 1)
+        ax.set_ylim(0, ymax_s)
+        ax.set_xlabel("Sampling points")
+        ax.set_ylabel(ylabel)
+        ax.set_title(title, loc="left")
+        for spine in ax.spines.values():
             spine.set_linewidth(0.6)
 
-        zs = max(zoom_start, 0)
-        ze = min(zoom_end, n_pts)
-        xz = x[zs:ze]
-        ax_zoom.plot(xz, pred_s[zs:ze], color="#ff7f0e", lw=0.9, zorder=2)
-        ax_zoom.plot(xz, gt_s[zs:ze], color="#2ca02c", lw=0.9, zorder=3)
-        ax_zoom.set_xlim(zs, ze - 1 if ze > zs else zs + 1)
-        ax_zoom.set_ylim(0, ymax_s)
-        ax_zoom.set_xticks([zs, ze - 1] if ze > zs else [zs])
-        ax_zoom.set_xlabel("Zoom")
-        ax_zoom.tick_params(left=False, labelleft=False)
-        ax_zoom.spines["left"].set_visible(False)
-        for spine in ax_zoom.spines.values():
+        zs = max(int(zoom_start), 0)
+        ze = min(int(zoom_end), n_pts - 1)
+        if ze <= zs:
+            return
+
+        span_frac_l = zs / max(n_pts - 1, 1)
+        span_frac_r = ze / max(n_pts - 1, 1)
+        span_width = span_frac_r - span_frac_l
+        inset_width = min(max(span_width * 1.6, 0.18), 0.55)
+        center = (span_frac_l + span_frac_r) / 2
+        x0 = min(max(center - inset_width / 2, 0.02), 0.98 - inset_width)
+        inset_rect = (x0, 0.58, inset_width, 0.38)
+
+        axins = ax.inset_axes(inset_rect)
+        axins.plot(x[zs:ze + 1], pred_s[zs:ze + 1], color="#ff7f0e", lw=0.9, zorder=2)
+        axins.plot(x[zs:ze + 1], gt_s[zs:ze + 1], color="#2ca02c", lw=0.9, zorder=3)
+
+        zoom_max = float(max(gt_s[zs:ze + 1].max(), pred_s[zs:ze + 1].max(), 1e-6))
+        axins.set_xlim(zs, ze)
+        axins.set_ylim(0, zoom_max * 1.1)
+        axins.set_xticks([])
+        axins.set_yticks([])
+        axins.set_facecolor("white")
+        for spine in axins.spines.values():
             spine.set_linewidth(0.6)
+            spine.set_edgecolor("black")
+        ax.indicate_inset_zoom(axins, edgecolor="black", lw=0.5, alpha=0.85)
+
+    def _ymax_with_headroom(gt_power, predictions):
+        ymax_data = max(float(gt_power.max()), 1.0)
+        for p in predictions.values():
+            ymax_data = max(ymax_data, float(p.max()))
+        return ymax_data * 1.95
 
     def make_figure(gt_power, predictions, app_name, zoom_frac):
         n_pts = len(gt_power)
@@ -222,9 +241,7 @@ def _(
         model_names = list(predictions.keys())
         n_models = len(model_names)
 
-        ymax = max(float(gt_power.max()) * 1.15, 1.0)
-        for p in predictions.values():
-            ymax = max(ymax, float(p.max()) * 1.05)
+        ymax = _ymax_with_headroom(gt_power, predictions)
         scale, ylabel = _power_unit(ymax)
         zoom_start, zoom_end = _pick_zoom(gt_power, zoom_frac)
 
@@ -237,29 +254,28 @@ def _(
             ax.legend(frameon=False)
             return fig
 
-        ncols_models = 3 if n_models >= 3 else n_models
-        nrows = (n_models + ncols_models - 1) // ncols_models
-        fig = plt.figure(
-            figsize=(3.6 * ncols_models, 2.2 * nrows),
+        ncols = 3 if n_models >= 3 else n_models
+        nrows = (n_models + ncols - 1) // ncols
+        fig, axes = plt.subplots(
+            nrows, ncols, figsize=(4.6 * ncols, 2.6 * nrows), squeeze=False,
             constrained_layout=True, facecolor="white",
-        )
-        gs = fig.add_gridspec(
-            nrows, ncols_models * 2,
-            width_ratios=[3, 1] * ncols_models,
         )
 
         handles, labels = None, None
         for i, model_name in enumerate(model_names):
-            r, c = divmod(i, ncols_models)
-            ax_full = fig.add_subplot(gs[r, 2 * c])
-            ax_zoom = fig.add_subplot(gs[r, 2 * c + 1], sharey=ax_full)
+            row, col = divmod(i, ncols)
+            ax = axes[row][col]
             _draw_panel(
-                ax_full, ax_zoom, x, gt_power, predictions[model_name],
+                ax, x, gt_power, predictions[model_name],
                 zoom_start, zoom_end, ymax, scale, ylabel,
                 title=f"({chr(ord('a') + i)}) {model_name}",
             )
             if handles is None:
-                handles, labels = ax_full.get_legend_handles_labels()
+                handles, labels = ax.get_legend_handles_labels()
+
+        for j in range(n_models, nrows * ncols):
+            row, col = divmod(j, ncols)
+            axes[row][col].set_visible(False)
 
         if handles:
             fig.legend(handles, labels, loc="upper center", ncols=2,
@@ -271,20 +287,18 @@ def _(
     def make_single_figure(gt_power, pred, model_name, app_name, zoom_frac):
         n_pts = len(gt_power)
         x = np.arange(n_pts)
-        ymax = max(float(gt_power.max()) * 1.15, float(pred.max()) * 1.05, 1.0)
+        ymax = _ymax_with_headroom(gt_power, {"_": pred})
         scale, ylabel = _power_unit(ymax)
         zoom_start, zoom_end = _pick_zoom(gt_power, zoom_frac)
 
-        fig = plt.figure(figsize=(8.5, 2.6), constrained_layout=True, facecolor="white")
-        gs = fig.add_gridspec(1, 2, width_ratios=[3, 1])
-        ax_full = fig.add_subplot(gs[0, 0])
-        ax_zoom = fig.add_subplot(gs[0, 1], sharey=ax_full)
+        fig, ax = plt.subplots(
+            1, 1, figsize=(9.5, 3.0), constrained_layout=True, facecolor="white",
+        )
         _draw_panel(
-            ax_full, ax_zoom, x, gt_power, pred, zoom_start, zoom_end,
-            ymax, scale, ylabel,
+            ax, x, gt_power, pred, zoom_start, zoom_end, ymax, scale, ylabel,
             title=f"{model_name} — {app_name}",
         )
-        handles, labels = ax_full.get_legend_handles_labels()
+        handles, labels = ax.get_legend_handles_labels()
         fig.legend(handles, labels, loc="upper center", ncols=2,
                    frameon=False, bbox_to_anchor=(0.5, 1.04))
         return fig
