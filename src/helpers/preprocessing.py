@@ -676,7 +676,7 @@ class UKDALE_DataBuilder(object):
                 appl_data.columns = ["time", appliance]
                 appl_data["time"] = pd.to_datetime(appl_data["time"], unit="s")
                 appl_data = appl_data.set_index("time")
-                appl_data = appl_data.resample("10s").mean()
+                appl_data = appl_data.resample("10s").max()
                 appl_data[appliance] = self._fill_long_gaps_with_zero(appl_data[appliance])
                 appl_data = appl_data.ffill(limit=6)
                 appl_data[appl_data < 5] = 0  # Remove small value
