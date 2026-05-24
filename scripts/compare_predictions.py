@@ -16,6 +16,17 @@ def _():
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    plt.style.use("default")
+    plt.rcParams.update({
+        "figure.facecolor": "white",
+        "axes.facecolor": "white",
+        "savefig.facecolor": "white",
+        "axes.edgecolor": "black",
+        "axes.labelcolor": "black",
+        "xtick.color": "black",
+        "ytick.color": "black",
+        "text.color": "black",
+    })
     import torch
     import yaml
 
@@ -168,7 +179,7 @@ def _(
         ax.set_ylabel(ylabel, fontsize=label_fs)
         ax.set_title(title, fontsize=title_fs, loc="left")
         ax.legend(loc="upper left", fontsize=legend_fs, framealpha=0.9,
-                  frameon=True, edgecolor="0.5")
+                  frameon=True, edgecolor="0.5", facecolor="white")
         ax.tick_params(labelsize=tick_fs)
         for spine in ax.spines.values():
             spine.set_linewidth(0.8)
