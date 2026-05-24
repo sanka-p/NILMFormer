@@ -137,104 +137,114 @@ def _(
                 pass
         return predictions
 
+    def _pick_zoom(gt_power, zoom_frac):
+        n_pts = len(gt_power)
+        zoom_len = max(int(n_pts * zoom_frac), 50)
+        kernel = np.ones(zoom_len) / zoom_len
+        smoothed = np.convolve(gt_power, kernel, mode="valid")
+        zoom_start = int(np.argmax(smoothed)) if len(smoothed) else 0
+        zoom_end = min(zoom_start + zoom_len, n_pts - 1)
+        return zoom_start, zoom_end
+
+    def _power_unit(ymax_w):
+        if ymax_w >= 1500:
+            return 1.0 / 1000.0, "Power (kW)"
+        return 1.0, "Power (W)"
+
+    def _draw_panel(ax, x, gt, pred, zoom_start, zoom_end, ymax, scale, ylabel,
+                    title, label_fs=9, tick_fs=8, title_fs=10, legend_fs=8,
+                    inset_rect=(0.30, 0.55, 0.45, 0.42)):
+        n_pts = len(gt)
+        gt_s = gt * scale
+        pred_s = pred * scale
+        ymax_s = ymax * scale
+
+        ax.plot(x, pred_s, color="#ff7f0e", lw=0.9, label="Prediction", zorder=2)
+        ax.plot(x, gt_s, color="#2ca02c", lw=0.9, label="Ground-Truth", zorder=3)
+        ax.axvspan(zoom_start, zoom_end, color="0.85", alpha=0.6, zorder=1, lw=0)
+        ax.set_xlim(0, n_pts - 1)
+        ax.set_ylim(0, ymax_s)
+        ax.set_xlabel("Sampling points", fontsize=label_fs)
+        ax.set_ylabel(ylabel, fontsize=label_fs)
+        ax.set_title(title, fontsize=title_fs, loc="left")
+        ax.legend(loc="upper left", fontsize=legend_fs, framealpha=0.9,
+                  frameon=True, edgecolor="0.5")
+        ax.tick_params(labelsize=tick_fs)
+        for spine in ax.spines.values():
+            spine.set_linewidth(0.8)
+
+        axins = ax.inset_axes(inset_rect)
+        axins.plot(x[zoom_start:zoom_end], pred_s[zoom_start:zoom_end],
+                   color="#ff7f0e", lw=0.9)
+        axins.plot(x[zoom_start:zoom_end], gt_s[zoom_start:zoom_end],
+                   color="#2ca02c", lw=0.9)
+        axins.set_xlim(zoom_start, zoom_end)
+        axins.set_ylim(0, ymax_s)
+        axins.set_xticks([])
+        axins.set_yticks([])
+        for spine in axins.spines.values():
+            spine.set_linewidth(0.8)
+            spine.set_edgecolor("black")
+        ax.indicate_inset_zoom(axins, edgecolor="black", lw=0.6, alpha=0.9)
+
     def make_figure(gt_power, predictions, app_name, zoom_frac):
         n_pts = len(gt_power)
         x = np.arange(n_pts)
         model_names = list(predictions.keys())
         n_models = len(model_names)
 
-        zoom_len = max(int(n_pts * zoom_frac), 50)
-        kernel = np.ones(zoom_len) / zoom_len
-        smoothed = np.convolve(gt_power, kernel, mode="valid")
-        zoom_start = int(np.argmax(smoothed))
-        zoom_end = min(zoom_start + zoom_len, n_pts - 1)
-        ymax_global = max(float(gt_power.max()) * 1.2, 1.0)
+        ymax = max(float(gt_power.max()) * 1.15, 1.0)
+        for p in predictions.values():
+            ymax = max(ymax, float(p.max()) * 1.05)
+        scale, ylabel = _power_unit(ymax)
+        zoom_start, zoom_end = _pick_zoom(gt_power, zoom_frac)
 
         if n_models == 0:
             fig, ax = plt.subplots(1, 1, figsize=(10, 3), constrained_layout=True)
-            ax.plot(x, gt_power, color="tab:green", lw=1, label="Ground-Truth")
+            ax.plot(x, gt_power * scale, color="#2ca02c", lw=1, label="Ground-Truth")
             ax.set_xlabel("Sampling points")
-            ax.set_ylabel("Power (W)")
+            ax.set_ylabel(ylabel)
             ax.set_title(f"{app_name} — no predictions loaded")
             ax.legend()
             return fig
 
-        ncols = 3
+        ncols = 3 if n_models >= 3 else n_models
         nrows = (n_models + ncols - 1) // ncols
         fig, axes = plt.subplots(
-            nrows, ncols, figsize=(5 * ncols, 3.8 * nrows), squeeze=False,
-            constrained_layout=True,
+            nrows, ncols, figsize=(4.8 * ncols, 3.4 * nrows), squeeze=False,
+            constrained_layout=True, facecolor="white",
         )
 
         for i, model_name in enumerate(model_names):
             row, col = divmod(i, ncols)
-            ax = axes[row][col]
-            pred = predictions[model_name]
-
-            ax.plot(x, gt_power, color="tab:green", lw=0.9, label="Ground-Truth", zorder=3)
-            ax.plot(x, pred, color="tab:orange", lw=0.9, alpha=0.85, label="Prediction", zorder=2)
-            ax.axvspan(zoom_start, zoom_end, alpha=0.10, color="steelblue", zorder=1)
-            ax.set_xlim(0, n_pts - 1)
-            ax.set_ylim(0, ymax_global)
-            ax.set_xlabel("Sampling points", fontsize=8)
-            ax.set_ylabel("Power (W)", fontsize=8)
-            ax.set_title(f"({chr(ord('a') + i)}) {model_name}", fontsize=9)
-            ax.legend(loc="upper right", fontsize=7, framealpha=0.7)
-            ax.tick_params(labelsize=7)
-
-            axins = ax.inset_axes([0.02, 0.54, 0.34, 0.42])
-            axins.plot(x[zoom_start:zoom_end], gt_power[zoom_start:zoom_end],
-                       color="tab:green", lw=0.9)
-            axins.plot(x[zoom_start:zoom_end], pred[zoom_start:zoom_end],
-                       color="tab:orange", lw=0.9, alpha=0.85)
-            axins.set_xlim(zoom_start, zoom_end)
-            axins.set_ylim(0, ymax_global)
-            axins.tick_params(labelsize=5)
-            ax.indicate_inset_zoom(axins, edgecolor="black", lw=0.6, alpha=0.8)
+            _draw_panel(
+                axes[row][col], x, gt_power, predictions[model_name],
+                zoom_start, zoom_end, ymax, scale, ylabel,
+                title=f"({chr(ord('a') + i)}) {model_name}",
+                label_fs=9, tick_fs=8, title_fs=10, legend_fs=8,
+            )
 
         for j in range(n_models, nrows * ncols):
             row, col = divmod(j, ncols)
             axes[row][col].set_visible(False)
 
-        fig.suptitle(
-            f"Comparison of disaggregated power consumption — {app_name}",
-            fontsize=10,
-        )
         return fig
 
     def make_single_figure(gt_power, pred, model_name, app_name, zoom_frac):
         n_pts = len(gt_power)
         x = np.arange(n_pts)
-        zoom_len = max(int(n_pts * zoom_frac), 50)
-        kernel = np.ones(zoom_len) / zoom_len
-        smoothed = np.convolve(gt_power, kernel, mode="valid")
-        zoom_start = int(np.argmax(smoothed))
-        zoom_end = min(zoom_start + zoom_len, n_pts - 1)
-        ymax_global = max(float(gt_power.max()) * 1.2, 1.0)
+        ymax = max(float(gt_power.max()) * 1.15, float(pred.max()) * 1.05, 1.0)
+        scale, ylabel = _power_unit(ymax)
+        zoom_start, zoom_end = _pick_zoom(gt_power, zoom_frac)
 
-        fig, ax = plt.subplots(1, 1, figsize=(12, 4), constrained_layout=True)
-
-        ax.plot(x, gt_power, color="tab:green", lw=0.9, label="Ground-Truth", zorder=3)
-        ax.plot(x, pred, color="tab:orange", lw=0.9, alpha=0.85, label="Prediction", zorder=2)
-        ax.axvspan(zoom_start, zoom_end, alpha=0.10, color="steelblue", zorder=1)
-        ax.set_xlim(0, n_pts - 1)
-        ax.set_ylim(0, ymax_global)
-        ax.set_xlabel("Sampling points", fontsize=9)
-        ax.set_ylabel("Power (W)", fontsize=9)
-        ax.set_title(f"{model_name} — {app_name}", fontsize=10)
-        ax.legend(loc="upper right", fontsize=8, framealpha=0.7)
-        ax.tick_params(labelsize=8)
-
-        axins = ax.inset_axes([0.02, 0.54, 0.30, 0.42])
-        axins.plot(x[zoom_start:zoom_end], gt_power[zoom_start:zoom_end],
-                   color="tab:green", lw=0.9)
-        axins.plot(x[zoom_start:zoom_end], pred[zoom_start:zoom_end],
-                   color="tab:orange", lw=0.9, alpha=0.85)
-        axins.set_xlim(zoom_start, zoom_end)
-        axins.set_ylim(0, ymax_global)
-        axins.tick_params(labelsize=6)
-        ax.indicate_inset_zoom(axins, edgecolor="black", lw=0.7, alpha=0.8)
-
+        fig, ax = plt.subplots(1, 1, figsize=(11, 3.6), constrained_layout=True,
+                               facecolor="white")
+        _draw_panel(
+            ax, x, gt_power, pred, zoom_start, zoom_end, ymax, scale, ylabel,
+            title=f"{model_name} — {app_name}",
+            label_fs=10, tick_fs=9, title_fs=11, legend_fs=9,
+            inset_rect=(0.32, 0.55, 0.40, 0.42),
+        )
         return fig
 
     def fig_to_image(fig):
