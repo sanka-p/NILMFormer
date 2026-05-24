@@ -58,17 +58,19 @@ def _(mo):
     window_size_num = mo.ui.number(value=128, label="Window size")
     seed_num = mo.ui.number(value=0, label="Seed")
     zoom_frac_num = mo.ui.number(value=0.15, label="Zoom fraction (0–1)")
+    max_pts_num = mo.ui.number(value=7500, label="Max sampling points")
     load_btn = mo.ui.run_button(label="Load & Plot")
 
     mo.vstack([
         mo.hstack([result_path_input, data_path_input]),
-        mo.hstack([dataset_dd, sr_dd, window_size_num, seed_num, zoom_frac_num]),
+        mo.hstack([dataset_dd, sr_dd, window_size_num, seed_num, zoom_frac_num, max_pts_num]),
         load_btn,
     ])
     return (
         data_path_input,
         dataset_dd,
         load_btn,
+        max_pts_num,
         result_path_input,
         seed_num,
         sr_dd,
@@ -227,6 +229,7 @@ def _(
     load_predictions,
     load_test_data,
     make_figure,
+    max_pts_num,
     mo,
     np,
     os,
@@ -270,10 +273,11 @@ def _(
             _result_path, _dataset, _app_key, _sr, _ws, _seed
         )
 
-        # Concatenate all windows into one continuous time series
-        _gt_power = _data_test[:, 1, 0, :].reshape(-1).astype(float)
+        # Concatenate all windows into one continuous time series, capped at max_pts
+        _max_pts = int(max_pts_num.value)
+        _gt_power = _data_test[:, 1, 0, :].reshape(-1).astype(float)[:_max_pts]
         _predictions_full = {
-            name: pred.reshape(-1).astype(float)
+            name: pred.reshape(-1).astype(float)[:_max_pts]
             for name, pred in _predictions_windowed.items()
         }
 
