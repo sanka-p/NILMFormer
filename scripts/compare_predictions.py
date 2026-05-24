@@ -16,7 +16,6 @@ def _():
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    from mpl_toolkits.axes_grid1.inset_locator import inset_axes, mark_inset
     import torch
     import yaml
 
@@ -34,9 +33,7 @@ def _():
         REFIT_DataBuilder,
         UKDALE_DataBuilder,
         glob,
-        inset_axes,
         io,
-        mark_inset,
         matplotlib,
         mo,
         np,
@@ -90,9 +87,7 @@ def _(
     REFIT_DataBuilder,
     UKDALE_DataBuilder,
     glob,
-    inset_axes,
     io,
-    mark_inset,
     mo,
     np,
     os,
@@ -148,7 +143,6 @@ def _(
         model_names = list(predictions.keys())
         n_models = len(model_names)
 
-        # Find zoom window: slide over gt_power, pick region with highest mean
         zoom_len = max(int(n_pts * zoom_frac), 50)
         kernel = np.ones(zoom_len) / zoom_len
         smoothed = np.convolve(gt_power, kernel, mode="valid")
@@ -157,34 +151,29 @@ def _(
         ymax_global = max(float(gt_power.max()) * 1.2, 1.0)
 
         if n_models == 0:
-            fig, ax = plt.subplots(1, 1, figsize=(10, 3))
-            ax.plot(x, gt_power, color="green", lw=1, label="Ground-Truth")
+            fig, ax = plt.subplots(1, 1, figsize=(10, 3), constrained_layout=True)
+            ax.plot(x, gt_power, color="tab:green", lw=1, label="Ground-Truth")
             ax.set_xlabel("Sampling points")
             ax.set_ylabel("Power (W)")
             ax.set_title(f"{app_name} — no predictions loaded")
             ax.legend()
-            fig.subplots_adjust(left=0.08, right=0.98, top=0.92, bottom=0.12)
             return fig
 
         ncols = 3
         nrows = (n_models + ncols - 1) // ncols
         fig, axes = plt.subplots(
             nrows, ncols, figsize=(5 * ncols, 3.8 * nrows), squeeze=False,
-            facecolor="white",
+            constrained_layout=True,
         )
-        fig.patch.set_facecolor("white")
 
         for i, model_name in enumerate(model_names):
             row, col = divmod(i, ncols)
             ax = axes[row][col]
-            ax.set_facecolor("white")
             pred = predictions[model_name]
 
-            # Main series
-            ax.plot(x, gt_power, color="green", lw=0.9, label="Ground-Truth", zorder=3)
-            ax.plot(x, pred, color="darkorange", lw=0.9, alpha=0.85, label="Prediction", zorder=2)
-            ax.axvspan(zoom_start, zoom_end, alpha=0.10, color="gray", zorder=1)
-
+            ax.plot(x, gt_power, color="tab:green", lw=0.9, label="Ground-Truth", zorder=3)
+            ax.plot(x, pred, color="tab:orange", lw=0.9, alpha=0.85, label="Prediction", zorder=2)
+            ax.axvspan(zoom_start, zoom_end, alpha=0.10, color="steelblue", zorder=1)
             ax.set_xlim(0, n_pts - 1)
             ax.set_ylim(0, ymax_global)
             ax.set_xlabel("Sampling points", fontsize=8)
@@ -193,23 +182,15 @@ def _(
             ax.legend(loc="upper right", fontsize=7, framealpha=0.7)
             ax.tick_params(labelsize=7)
 
-            # Inset zoom panel
-            axins = inset_axes(
-                ax, width="38%", height="42%",
-                loc="upper left",
-                bbox_to_anchor=(0.01, 0.99, 1.0, 1.0),
-                bbox_transform=ax.transAxes,
-                borderpad=0,
-            )
-            axins.set_facecolor("white")
+            axins = ax.inset_axes([0.02, 0.54, 0.34, 0.42])
             axins.plot(x[zoom_start:zoom_end], gt_power[zoom_start:zoom_end],
-                       color="green", lw=0.9)
+                       color="tab:green", lw=0.9)
             axins.plot(x[zoom_start:zoom_end], pred[zoom_start:zoom_end],
-                       color="darkorange", lw=0.9, alpha=0.85)
+                       color="tab:orange", lw=0.9, alpha=0.85)
             axins.set_xlim(zoom_start, zoom_end)
             axins.set_ylim(0, ymax_global)
             axins.tick_params(labelsize=5)
-            mark_inset(ax, axins, loc1=2, loc2=3, fc="none", ec="0.45", lw=0.6)
+            ax.indicate_inset_zoom(axins, edgecolor="black", lw=0.6, alpha=0.8)
 
         for j in range(n_models, nrows * ncols):
             row, col = divmod(j, ncols)
@@ -217,9 +198,8 @@ def _(
 
         fig.suptitle(
             f"Comparison of disaggregated power consumption — {app_name}",
-            fontsize=10, y=1.01,
+            fontsize=10,
         )
-        fig.subplots_adjust(left=0.06, right=0.98, top=0.93, bottom=0.08, hspace=0.45, wspace=0.3)
         return fig
 
     def make_single_figure(gt_power, pred, model_name, app_name, zoom_frac):
@@ -232,34 +212,29 @@ def _(
         zoom_end = min(zoom_start + zoom_len, n_pts - 1)
         ymax_global = max(float(gt_power.max()) * 1.2, 1.0)
 
-        fig, (ax, ax_zoom) = plt.subplots(1, 2, figsize=(14, 4),
-                                          gridspec_kw={"width_ratios": [3, 1]})
+        fig, ax = plt.subplots(1, 1, figsize=(12, 4), constrained_layout=True)
 
-        for a in (ax, ax_zoom):
-            a.set_facecolor("white")
-
-        ax.plot(x, gt_power, color="tab:green", lw=0.9, label="Ground-Truth")
-        ax.plot(x, pred, color="tab:orange", lw=0.9, alpha=0.85, label="Prediction")
-        ax.axvspan(zoom_start, zoom_end, alpha=0.12, color="steelblue")
+        ax.plot(x, gt_power, color="tab:green", lw=0.9, label="Ground-Truth", zorder=3)
+        ax.plot(x, pred, color="tab:orange", lw=0.9, alpha=0.85, label="Prediction", zorder=2)
+        ax.axvspan(zoom_start, zoom_end, alpha=0.10, color="steelblue", zorder=1)
         ax.set_xlim(0, n_pts - 1)
         ax.set_ylim(0, ymax_global)
         ax.set_xlabel("Sampling points", fontsize=9)
         ax.set_ylabel("Power (W)", fontsize=9)
         ax.set_title(f"{model_name} — {app_name}", fontsize=10)
-        ax.legend(fontsize=8, framealpha=0.7)
+        ax.legend(loc="upper right", fontsize=8, framealpha=0.7)
         ax.tick_params(labelsize=8)
 
-        ax_zoom.plot(x[zoom_start:zoom_end], gt_power[zoom_start:zoom_end],
-                     color="tab:green", lw=1.0, label="Ground-Truth")
-        ax_zoom.plot(x[zoom_start:zoom_end], pred[zoom_start:zoom_end],
-                     color="tab:orange", lw=1.0, alpha=0.85, label="Prediction")
-        ax_zoom.set_xlim(zoom_start, zoom_end)
-        ax_zoom.set_ylim(0, ymax_global)
-        ax_zoom.set_xlabel("Sampling points", fontsize=9)
-        ax_zoom.set_title("Zoom", fontsize=9)
-        ax_zoom.tick_params(labelsize=8)
+        axins = ax.inset_axes([0.02, 0.54, 0.30, 0.42])
+        axins.plot(x[zoom_start:zoom_end], gt_power[zoom_start:zoom_end],
+                   color="tab:green", lw=0.9)
+        axins.plot(x[zoom_start:zoom_end], pred[zoom_start:zoom_end],
+                   color="tab:orange", lw=0.9, alpha=0.85)
+        axins.set_xlim(zoom_start, zoom_end)
+        axins.set_ylim(0, ymax_global)
+        axins.tick_params(labelsize=6)
+        ax.indicate_inset_zoom(axins, edgecolor="black", lw=0.7, alpha=0.8)
 
-        fig.tight_layout()
         return fig
 
     def fig_to_image(fig):
