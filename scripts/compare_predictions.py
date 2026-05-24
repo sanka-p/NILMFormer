@@ -154,7 +154,7 @@ def _(
         smoothed = np.convolve(gt_power, kernel, mode="valid")
         zoom_start = int(np.argmax(smoothed))
         zoom_end = min(zoom_start + zoom_len, n_pts - 1)
-        ymax_global = float(gt_power.max()) * 1.2
+        ymax_global = max(float(gt_power.max()) * 1.2, 1.0)
 
         if n_models == 0:
             fig, ax = plt.subplots(1, 1, figsize=(10, 3))
@@ -163,7 +163,7 @@ def _(
             ax.set_ylabel("Power (W)")
             ax.set_title(f"{app_name} — no predictions loaded")
             ax.legend()
-            plt.tight_layout()
+            fig.subplots_adjust(left=0.08, right=0.98, top=0.92, bottom=0.12)
             return fig
 
         ncols = 3
@@ -219,7 +219,7 @@ def _(
             f"Comparison of disaggregated power consumption — {app_name}",
             fontsize=10, y=1.01,
         )
-        plt.tight_layout()
+        fig.subplots_adjust(left=0.06, right=0.98, top=0.93, bottom=0.08, hspace=0.45, wspace=0.3)
         return fig
 
     def make_single_figure(gt_power, pred, model_name, app_name, zoom_frac):
@@ -230,7 +230,7 @@ def _(
         smoothed = np.convolve(gt_power, kernel, mode="valid")
         zoom_start = int(np.argmax(smoothed))
         zoom_end = min(zoom_start + zoom_len, n_pts - 1)
-        ymax_global = float(gt_power.max()) * 1.2
+        ymax_global = max(float(gt_power.max()) * 1.2, 1.0)
 
         fig, ax = plt.subplots(1, 1, figsize=(10, 4), facecolor="white")
         fig.patch.set_facecolor("white")
@@ -265,7 +265,7 @@ def _(
         axins.tick_params(labelsize=5)
         mark_inset(ax, axins, loc1=2, loc2=3, fc="none", ec="0.45", lw=0.6)
 
-        plt.tight_layout()
+        fig.subplots_adjust(left=0.08, right=0.98, top=0.92, bottom=0.10)
         return fig
 
     def fig_to_image(fig):
