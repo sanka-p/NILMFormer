@@ -522,6 +522,7 @@ def _(
     fig_to_image,
     glob,
     make_single_figure,
+    max_pts_num,
     mo,
     np,
     os,
@@ -546,6 +547,7 @@ def _(
     _ws3 = int(window_size_num.value)
     _seed3 = int(seed_num.value)
     _zoom3 = float(zoom_frac_num.value)
+    _max_pts3 = int(max_pts_num.value)
 
     _fridge_key3 = None
     for _k3, _v3 in _cfg3[_dataset3].items():
@@ -571,6 +573,10 @@ def _(
             _df = pd.read_csv(_csv_path)
             _gt3 = _df["ground_truth"].to_numpy()
             _pred3 = _df["prediction"].to_numpy()
+            _total_pts3 = len(_gt3)
+            if _max_pts3 > 0:
+                _gt3 = _gt3[:_max_pts3]
+                _pred3 = _pred3[:_max_pts3]
 
             _fig3 = make_single_figure(_gt3, _pred3, _model_name3, _fridge_app_name3, _zoom3)
             _png_path = os.path.join(_plots_dir3, f"{_stem}.png")
