@@ -26,6 +26,28 @@ def _():
         "xtick.color": "black",
         "ytick.color": "black",
         "text.color": "black",
+        "font.family": "sans-serif",
+        "font.sans-serif": ["Helvetica", "Arial", "DejaVu Sans"],
+        "font.size": 8,
+        "axes.labelsize": 9,
+        "axes.titlesize": 10,
+        "xtick.labelsize": 7,
+        "ytick.labelsize": 7,
+        "legend.fontsize": 8,
+        "axes.linewidth": 0.6,
+        "lines.linewidth": 0.9,
+        "axes.spines.top": False,
+        "axes.spines.right": False,
+        "axes.grid": False,
+        "xtick.direction": "out",
+        "ytick.direction": "out",
+        "xtick.major.size": 3,
+        "ytick.major.size": 3,
+        "xtick.major.width": 0.6,
+        "ytick.major.width": 0.6,
+        "pdf.fonttype": 42,
+        "ps.fonttype": 42,
+        "svg.fonttype": "none",
     })
     import torch
     import yaml
@@ -162,41 +184,37 @@ def _(
             return 1.0 / 1000.0, "Power (kW)"
         return 1.0, "Power (W)"
 
-    def _draw_panel(ax, x, gt, pred, zoom_start, zoom_end, ymax, scale, ylabel,
-                    title, label_fs=9, tick_fs=8, title_fs=10, legend_fs=8,
-                    inset_rect=(0.30, 0.55, 0.45, 0.42)):
+    def _draw_panel(ax_full, ax_zoom, x, gt, pred, zoom_start, zoom_end,
+                    ymax, scale, ylabel, title):
         n_pts = len(gt)
         gt_s = gt * scale
         pred_s = pred * scale
         ymax_s = ymax * scale
 
-        ax.plot(x, pred_s, color="#ff7f0e", lw=0.9, label="Prediction", zorder=2)
-        ax.plot(x, gt_s, color="#2ca02c", lw=0.9, label="Ground-Truth", zorder=3)
-        ax.axvspan(zoom_start, zoom_end, color="0.85", alpha=0.6, zorder=1, lw=0)
-        ax.set_xlim(0, n_pts - 1)
-        ax.set_ylim(0, ymax_s)
-        ax.set_xlabel("Sampling points", fontsize=label_fs)
-        ax.set_ylabel(ylabel, fontsize=label_fs)
-        ax.set_title(title, fontsize=title_fs, loc="left")
-        ax.legend(loc="upper left", fontsize=legend_fs, framealpha=0.9,
-                  frameon=True, edgecolor="0.5", facecolor="white")
-        ax.tick_params(labelsize=tick_fs)
-        for spine in ax.spines.values():
-            spine.set_linewidth(0.8)
+        ax_full.plot(x, pred_s, color="#ff7f0e", lw=0.9, label="Prediction", zorder=2)
+        ax_full.plot(x, gt_s, color="#2ca02c", lw=0.9, label="Ground-Truth", zorder=3)
+        ax_full.axvspan(zoom_start, zoom_end, color="0.88", alpha=0.6, zorder=1, lw=0)
+        ax_full.set_xlim(0, n_pts - 1)
+        ax_full.set_ylim(0, ymax_s)
+        ax_full.set_xlabel("Sampling points")
+        ax_full.set_ylabel(ylabel)
+        ax_full.set_title(title, loc="left")
+        for spine in ax_full.spines.values():
+            spine.set_linewidth(0.6)
 
-        axins = ax.inset_axes(inset_rect)
-        axins.plot(x[zoom_start:zoom_end], pred_s[zoom_start:zoom_end],
-                   color="#ff7f0e", lw=0.9)
-        axins.plot(x[zoom_start:zoom_end], gt_s[zoom_start:zoom_end],
-                   color="#2ca02c", lw=0.9)
-        axins.set_xlim(zoom_start, zoom_end)
-        axins.set_ylim(0, ymax_s)
-        axins.set_xticks([])
-        axins.set_yticks([])
-        for spine in axins.spines.values():
-            spine.set_linewidth(0.8)
-            spine.set_edgecolor("black")
-        ax.indicate_inset_zoom(axins, edgecolor="black", lw=0.6, alpha=0.9)
+        zs = max(zoom_start, 0)
+        ze = min(zoom_end, n_pts)
+        xz = x[zs:ze]
+        ax_zoom.plot(xz, pred_s[zs:ze], color="#ff7f0e", lw=0.9, zorder=2)
+        ax_zoom.plot(xz, gt_s[zs:ze], color="#2ca02c", lw=0.9, zorder=3)
+        ax_zoom.set_xlim(zs, ze - 1 if ze > zs else zs + 1)
+        ax_zoom.set_ylim(0, ymax_s)
+        ax_zoom.set_xticks([zs, ze - 1] if ze > zs else [zs])
+        ax_zoom.set_xlabel("Zoom")
+        ax_zoom.tick_params(left=False, labelleft=False)
+        ax_zoom.spines["left"].set_visible(False)
+        for spine in ax_zoom.spines.values():
+            spine.set_linewidth(0.6)
 
     def make_figure(gt_power, predictions, app_name, zoom_frac):
         n_pts = len(gt_power)
@@ -211,34 +229,43 @@ def _(
         zoom_start, zoom_end = _pick_zoom(gt_power, zoom_frac)
 
         if n_models == 0:
-            fig, ax = plt.subplots(1, 1, figsize=(10, 3), constrained_layout=True)
-            ax.plot(x, gt_power * scale, color="#2ca02c", lw=1, label="Ground-Truth")
+            fig, ax = plt.subplots(1, 1, figsize=(7.2, 2.4), constrained_layout=True)
+            ax.plot(x, gt_power * scale, color="#2ca02c", lw=0.9, label="Ground-Truth")
             ax.set_xlabel("Sampling points")
             ax.set_ylabel(ylabel)
-            ax.set_title(f"{app_name} — no predictions loaded")
-            ax.legend()
+            ax.set_title(f"{app_name} — no predictions loaded", loc="left")
+            ax.legend(frameon=False)
             return fig
 
-        ncols = 3 if n_models >= 3 else n_models
-        nrows = (n_models + ncols - 1) // ncols
-        fig, axes = plt.subplots(
-            nrows, ncols, figsize=(4.8 * ncols, 3.4 * nrows), squeeze=False,
+        ncols_models = 3 if n_models >= 3 else n_models
+        nrows = (n_models + ncols_models - 1) // ncols_models
+        fig = plt.figure(
+            figsize=(3.6 * ncols_models, 2.2 * nrows),
             constrained_layout=True, facecolor="white",
         )
+        gs = fig.add_gridspec(
+            nrows, ncols_models * 2,
+            width_ratios=[3, 1] * ncols_models,
+        )
 
+        handles, labels = None, None
         for i, model_name in enumerate(model_names):
-            row, col = divmod(i, ncols)
+            r, c = divmod(i, ncols_models)
+            ax_full = fig.add_subplot(gs[r, 2 * c])
+            ax_zoom = fig.add_subplot(gs[r, 2 * c + 1], sharey=ax_full)
             _draw_panel(
-                axes[row][col], x, gt_power, predictions[model_name],
+                ax_full, ax_zoom, x, gt_power, predictions[model_name],
                 zoom_start, zoom_end, ymax, scale, ylabel,
                 title=f"({chr(ord('a') + i)}) {model_name}",
-                label_fs=9, tick_fs=8, title_fs=10, legend_fs=8,
             )
+            if handles is None:
+                handles, labels = ax_full.get_legend_handles_labels()
 
-        for j in range(n_models, nrows * ncols):
-            row, col = divmod(j, ncols)
-            axes[row][col].set_visible(False)
-
+        if handles:
+            fig.legend(handles, labels, loc="upper center", ncols=2,
+                       frameon=False, bbox_to_anchor=(0.5, 1.02))
+        fig.suptitle(app_name, fontsize=10, y=1.06, x=0.02, ha="left",
+                     fontweight="bold")
         return fig
 
     def make_single_figure(gt_power, pred, model_name, app_name, zoom_frac):
@@ -248,14 +275,18 @@ def _(
         scale, ylabel = _power_unit(ymax)
         zoom_start, zoom_end = _pick_zoom(gt_power, zoom_frac)
 
-        fig, ax = plt.subplots(1, 1, figsize=(11, 3.6), constrained_layout=True,
-                               facecolor="white")
+        fig = plt.figure(figsize=(8.5, 2.6), constrained_layout=True, facecolor="white")
+        gs = fig.add_gridspec(1, 2, width_ratios=[3, 1])
+        ax_full = fig.add_subplot(gs[0, 0])
+        ax_zoom = fig.add_subplot(gs[0, 1], sharey=ax_full)
         _draw_panel(
-            ax, x, gt_power, pred, zoom_start, zoom_end, ymax, scale, ylabel,
+            ax_full, ax_zoom, x, gt_power, pred, zoom_start, zoom_end,
+            ymax, scale, ylabel,
             title=f"{model_name} — {app_name}",
-            label_fs=10, tick_fs=9, title_fs=11, legend_fs=9,
-            inset_rect=(0.32, 0.55, 0.40, 0.42),
         )
+        handles, labels = ax_full.get_legend_handles_labels()
+        fig.legend(handles, labels, loc="upper center", ncols=2,
+                   frameon=False, bbox_to_anchor=(0.5, 1.04))
         return fig
 
     def fig_to_image(fig):
@@ -304,6 +335,9 @@ def _(
     _result_path = result_path_input.value
     _appliances_cfg = _datasets_cfg[_dataset]
 
+    _plots_dir = os.path.join(os.path.dirname(__file__), "..", "plots")
+    os.makedirs(_plots_dir, exist_ok=True)
+
     _tabs = {}
     for _app_key, _app_cfg in _appliances_cfg.items():
         _app_name = _app_cfg["app"].strip()
@@ -338,6 +372,12 @@ def _(
             if _n_models
             else mo.md(f"No checkpoints found at `{_result_path}` — {_pts_note}")
         )
+        if _n_models:
+            _svg_path = os.path.join(
+                _plots_dir,
+                f"{_dataset}_{_app_key}_{_sr}_{_ws}_seed{_seed}_grid.svg",
+            )
+            _fig.savefig(_svg_path, format="svg", bbox_inches="tight", facecolor="white")
         _tabs[_app_key] = mo.vstack([fig_to_image(_fig), _caption])
 
     mo.ui.tabs(_tabs)
@@ -570,6 +610,8 @@ def _(
 
             _fig3 = make_single_figure(_gt3, _pred3, _model_name3, _fridge_app_name3, _zoom3)
             _png_path = os.path.join(_plots_dir3, f"{_stem}.png")
+            _svg_path3 = os.path.join(_plots_dir3, f"{_stem}.svg")
+            _fig3.savefig(_svg_path3, format="svg", bbox_inches="tight", facecolor="white")
             _buf3 = io.BytesIO()
             _fig3.savefig(_buf3, format="png", dpi=150, bbox_inches="tight", facecolor="white")
             plt.close(_fig3)
