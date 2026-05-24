@@ -627,6 +627,10 @@ class UKDALE_DataBuilder(object):
         # House labels
         house_label = pd.read_csv(path_house + "labels.dat", sep=" ", header=None)
         house_label.columns = ["id", "appliance_name"]
+        _ukdale_label_map = {"dish_washer": "dishwasher"}
+        house_label["appliance_name"] = house_label["appliance_name"].map(
+            lambda x: _ukdale_label_map.get(x, x)
+        )
 
         # Load aggregate load curve and resample to lowest sampling rate
         house_data = pd.read_csv(path_house + "channel_1.dat", sep=" ", header=None)
@@ -676,7 +680,7 @@ class UKDALE_DataBuilder(object):
                 appl_data.columns = ["time", appliance]
                 appl_data["time"] = pd.to_datetime(appl_data["time"], unit="s")
                 appl_data = appl_data.set_index("time")
-                appl_data = appl_data.resample("10s").max()
+                appl_data = appl_data.resample("10s").mean()
                 appl_data[appliance] = self._fill_long_gaps_with_zero(appl_data[appliance])
                 appl_data = appl_data.ffill(limit=6)
                 appl_data[appl_data < 5] = 0  # Remove small value
