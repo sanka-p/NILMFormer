@@ -15,6 +15,7 @@ def _():
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    from mpl_toolkits.axes_grid1.inset_locator import inset_axes, mark_inset
     import torch
     import yaml
 
@@ -30,7 +31,9 @@ def _():
         REFIT_DataBuilder,
         UKDALE_DataBuilder,
         glob,
+        inset_axes,
         io,
+        mark_inset,
         matplotlib,
         mo,
         np,
@@ -54,23 +57,23 @@ def _(mo):
     )
     window_size_num = mo.ui.number(value=128, label="Window size")
     seed_num = mo.ui.number(value=0, label="Seed")
-    n_windows_num = mo.ui.number(value=4, label="Windows to compare")
+    zoom_frac_num = mo.ui.number(value=0.15, label="Zoom fraction (0–1)")
     load_btn = mo.ui.run_button(label="Load & Plot")
 
     mo.vstack([
         mo.hstack([result_path_input, data_path_input]),
-        mo.hstack([dataset_dd, sr_dd, window_size_num, seed_num, n_windows_num]),
+        mo.hstack([dataset_dd, sr_dd, window_size_num, seed_num, zoom_frac_num]),
         load_btn,
     ])
     return (
         data_path_input,
         dataset_dd,
         load_btn,
-        n_windows_num,
         result_path_input,
         seed_num,
         sr_dd,
         window_size_num,
+        zoom_frac_num,
     )
 
 
@@ -79,7 +82,9 @@ def _(
     REFIT_DataBuilder,
     UKDALE_DataBuilder,
     glob,
+    inset_axes,
     io,
+    mark_inset,
     mo,
     np,
     os,
@@ -113,15 +118,6 @@ def _(
             )
         return data_test
 
-    def find_good_windows(data_test, n=4):
-        activity = data_test[:, 1, 1, :].mean(axis=1)
-        power_sum = data_test[:, 1, 0, :].sum(axis=1)
-        candidates = np.where(activity > 0.3)[0]
-        if len(candidates) == 0:
-            candidates = np.arange(len(data_test))
-        sorted_candidates = candidates[np.argsort(power_sum[candidates])[::-1]]
-        return sorted_candidates[:n].tolist()
-
     def load_predictions(result_path, dataset, appliance_key, sr, ws, seed):
         ckpt_dir = os.path.join(result_path, f"{dataset}_{appliance_key}_{sr}", str(ws))
         predictions = {}
@@ -138,47 +134,88 @@ def _(
                 pass
         return predictions
 
-    def make_figure(agg, gt_power, gt_state, predictions, good_idx, app_name, sr):
-        sr_seconds = {"10s": 10, "1min": 60, "10min": 600, "30min": 1800}.get(sr, 60)
-        t = np.arange(len(agg)) * sr_seconds
+    def make_figure(gt_power, predictions, app_name, zoom_frac):
+        n_pts = len(gt_power)
+        x = np.arange(n_pts)
+        model_names = list(predictions.keys())
+        n_models = len(model_names)
 
-        fig, axes = plt.subplots(2, 1, figsize=(14, 6), sharex=True)
+        # Find zoom window: slide over gt_power, pick region with highest mean
+        zoom_len = max(int(n_pts * zoom_frac), 50)
+        kernel = np.ones(zoom_len) / zoom_len
+        smoothed = np.convolve(gt_power, kernel, mode="valid")
+        zoom_start = int(np.argmax(smoothed))
+        zoom_end = min(zoom_start + zoom_len, n_pts - 1)
+        ymax_global = float(gt_power.max()) * 1.2
 
-        axes[0].plot(t, agg, color="steelblue", lw=1, label="Aggregate")
-        axes[0].set_ylabel("Power (W)")
-        axes[0].set_title(f"{app_name}  —  test window {good_idx}")
-        axes[0].legend(loc="upper right")
+        if n_models == 0:
+            fig, ax = plt.subplots(1, 1, figsize=(10, 3))
+            ax.plot(x, gt_power, color="green", lw=1, label="Ground-Truth")
+            ax.set_xlabel("Sampling points")
+            ax.set_ylabel("Power (W)")
+            ax.set_title(f"{app_name} — no predictions loaded")
+            ax.legend()
+            plt.tight_layout()
+            return fig
 
-        axes[1].plot(t, gt_power, color="black", lw=1.8, label="Ground truth", zorder=5)
-        axes[1].fill_between(
-            t, 0, gt_power, where=gt_state > 0, alpha=0.12, color="black"
+        ncols = 3
+        nrows = (n_models + ncols - 1) // ncols
+        fig, axes = plt.subplots(nrows, ncols, figsize=(5 * ncols, 3.8 * nrows), squeeze=False)
+
+        for i, model_name in enumerate(model_names):
+            row, col = divmod(i, ncols)
+            ax = axes[row][col]
+            pred = predictions[model_name]
+
+            # Main series
+            ax.plot(x, gt_power, color="green", lw=0.9, label="Ground-Truth", zorder=3)
+            ax.plot(x, pred, color="darkorange", lw=0.9, alpha=0.85, label="Prediction", zorder=2)
+            ax.axvspan(zoom_start, zoom_end, alpha=0.10, color="gray", zorder=1)
+
+            ax.set_xlim(0, n_pts - 1)
+            ax.set_ylim(0, ymax_global)
+            ax.set_xlabel("Sampling points", fontsize=8)
+            ax.set_ylabel("Power (W)", fontsize=8)
+            ax.set_title(f"({chr(ord('a') + i)}) {model_name}", fontsize=9)
+            ax.legend(loc="upper right", fontsize=7, framealpha=0.7)
+            ax.tick_params(labelsize=7)
+
+            # Inset zoom panel
+            axins = inset_axes(
+                ax, width="38%", height="42%",
+                loc="upper left",
+                bbox_to_anchor=(0.01, 0.99, 1.0, 1.0),
+                bbox_transform=ax.transAxes,
+                borderpad=0,
+            )
+            axins.plot(x[zoom_start:zoom_end], gt_power[zoom_start:zoom_end],
+                       color="green", lw=0.9)
+            axins.plot(x[zoom_start:zoom_end], pred[zoom_start:zoom_end],
+                       color="darkorange", lw=0.9, alpha=0.85)
+            axins.set_xlim(zoom_start, zoom_end)
+            axins.set_ylim(0, ymax_global)
+            axins.tick_params(labelsize=5)
+            mark_inset(ax, axins, loc1=2, loc2=3, fc="none", ec="0.45", lw=0.6)
+
+        for j in range(n_models, nrows * ncols):
+            row, col = divmod(j, ncols)
+            axes[row][col].set_visible(False)
+
+        fig.suptitle(
+            f"Comparison of disaggregated power consumption — {app_name}",
+            fontsize=10, y=1.01,
         )
-        colors = plt.cm.tab10.colors
-        for i, (model_name, pred_2d) in enumerate(predictions.items()):
-            if good_idx < len(pred_2d):
-                axes[1].plot(
-                    t,
-                    pred_2d[good_idx],
-                    color=colors[i % 10],
-                    lw=1,
-                    alpha=0.85,
-                    label=model_name,
-                )
-        axes[1].set_ylabel("Appliance power (W)")
-        axes[1].set_xlabel(f"Time (s, Δ={sr_seconds}s)")
-        axes[1].legend(loc="upper right", fontsize=8, ncol=2)
-
         plt.tight_layout()
         return fig
 
     def fig_to_image(fig):
         buf = io.BytesIO()
-        fig.savefig(buf, format="png", dpi=110, bbox_inches="tight")
+        fig.savefig(buf, format="png", dpi=120, bbox_inches="tight")
         plt.close(fig)
         buf.seek(0)
         return mo.image(src=buf.read())
 
-    return fig_to_image, find_good_windows, load_predictions, load_test_data, make_figure
+    return fig_to_image, load_predictions, load_test_data, make_figure
 
 
 @app.cell
@@ -186,19 +223,19 @@ def _(
     data_path_input,
     dataset_dd,
     fig_to_image,
-    find_good_windows,
     load_btn,
     load_predictions,
     load_test_data,
     make_figure,
     mo,
-    n_windows_num,
+    np,
     os,
     result_path_input,
     seed_num,
     sr_dd,
     window_size_num,
     yaml,
+    zoom_frac_num,
 ):
     mo.stop(not load_btn.value, mo.md("Configure settings above and click **Load & Plot**."))
 
@@ -211,7 +248,7 @@ def _(
     _sr = sr_dd.value
     _ws = int(window_size_num.value)
     _seed = int(seed_num.value)
-    _n_windows = int(n_windows_num.value)
+    _zoom_frac = float(zoom_frac_num.value)
     _data_path = data_path_input.value
     _result_path = result_path_input.value
     _appliances_cfg = _datasets_cfg[_dataset]
@@ -229,28 +266,25 @@ def _(
             _tabs[_app_key] = mo.md(f"No test data for **{_app_name}**.")
             continue
 
-        _predictions = load_predictions(
+        _predictions_windowed = load_predictions(
             _result_path, _dataset, _app_key, _sr, _ws, _seed
         )
-        _n_models = len(_predictions)
-        _good_indices = find_good_windows(_data_test, n=_n_windows)
 
-        _panels = []
-        for _idx in _good_indices:
-            _agg = _data_test[_idx, 0, 0, :]
-            _gt_power = _data_test[_idx, 1, 0, :]
-            _gt_state = _data_test[_idx, 1, 1, :]
-            _fig = make_figure(
-                _agg, _gt_power, _gt_state, _predictions, _idx, _app_name, _sr
-            )
-            _caption = (
-                mo.md(f"Window {_idx} · {_n_models} model(s) loaded")
-                if _n_models
-                else mo.md(f"Window {_idx} · no checkpoints found at `{_result_path}`")
-            )
-            _panels.append(mo.vstack([fig_to_image(_fig), _caption]))
+        # Concatenate all windows into one continuous time series
+        _gt_power = _data_test[:, 1, 0, :].reshape(-1).astype(float)
+        _predictions_full = {
+            name: pred.reshape(-1).astype(float)
+            for name, pred in _predictions_windowed.items()
+        }
 
-        _tabs[_app_key] = mo.vstack(_panels)
+        _fig = make_figure(_gt_power, _predictions_full, _app_name, _zoom_frac)
+        _n_models = len(_predictions_full)
+        _caption = (
+            mo.md(f"{_n_models} model(s) — {len(_gt_power):,} sampling points")
+            if _n_models
+            else mo.md(f"No checkpoints found at `{_result_path}`")
+        )
+        _tabs[_app_key] = mo.vstack([fig_to_image(_fig), _caption])
 
     mo.ui.tabs(_tabs)
     return
