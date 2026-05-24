@@ -60,19 +60,17 @@ def _(mo):
     window_size_num = mo.ui.number(value=512, label="Window size")
     seed_num = mo.ui.number(value=0, label="Seed")
     zoom_frac_num = mo.ui.number(value=0.15, label="Zoom fraction (0–1)")
-    max_pts_num = mo.ui.number(value=7500, label="Max sampling points")
     load_btn = mo.ui.run_button(label="Load & Plot")
 
     mo.vstack([
         mo.hstack([result_path_input, data_path_input]),
-        mo.hstack([dataset_dd, sr_dd, window_size_num, seed_num, zoom_frac_num, max_pts_num]),
+        mo.hstack([dataset_dd, sr_dd, window_size_num, seed_num, zoom_frac_num]),
         load_btn,
     ])
     return (
         data_path_input,
         dataset_dd,
         load_btn,
-        max_pts_num,
         result_path_input,
         seed_num,
         sr_dd,
@@ -283,7 +281,6 @@ def _(
     load_predictions,
     load_test_data,
     make_figure,
-    max_pts_num,
     mo,
     np,
     os,
@@ -327,11 +324,9 @@ def _(
             _result_path, _dataset, _app_key, _sr, _ws, _seed
         )
 
-        # Concatenate all windows into one continuous time series, capped at max_pts
-        _max_pts = int(max_pts_num.value)
-        _gt_power = _data_test[:, 1, 0, :].reshape(-1).astype(float)[:_max_pts]
+        _gt_power = _data_test[:, 1, 0, :].reshape(-1).astype(float)
         _predictions_full = {
-            name: pred.reshape(-1).astype(float)[:_max_pts]
+            name: pred.reshape(-1).astype(float)
             for name, pred in _predictions_windowed.items()
         }
 
@@ -365,7 +360,6 @@ def _(
     dataset_dd,
     load_predictions,
     load_test_data,
-    max_pts_num,
     mo,
     np,
     os,
@@ -388,7 +382,6 @@ def _(
     _sr2 = sr_dd.value
     _ws2 = int(window_size_num.value)
     _seed2 = int(seed_num.value)
-    _max_pts2 = int(max_pts_num.value)
     _data_path2 = data_path_input.value
     _result_path2 = result_path_input.value
 
@@ -406,15 +399,15 @@ def _(
         _data_test2 = load_test_data(_dataset2, _fridge_cfg, _data_path2, _sr2, _ws2, _seed2)
         _preds2 = load_predictions(_result_path2, _dataset2, _fridge_key, _sr2, _ws2, _seed2)
 
-        _agg2 = _data_test2[:, 0, 0, :].reshape(-1).astype(float)[:_max_pts2]
-        _gt2 = _data_test2[:, 1, 0, :].reshape(-1).astype(float)[:_max_pts2]
+        _agg2 = _data_test2[:, 0, 0, :].reshape(-1).astype(float)
+        _gt2 = _data_test2[:, 1, 0, :].reshape(-1).astype(float)
 
         _plots_dir = os.path.join(os.path.dirname(__file__), "..", "plots")
         os.makedirs(_plots_dir, exist_ok=True)
 
         _saved = []
         for _model, _pred_win in _preds2.items():
-            _pred2 = _pred_win.reshape(-1).astype(float)[:_max_pts2]
+            _pred2 = _pred_win.reshape(-1).astype(float)
             _fname = f"{_dataset2}_{_fridge_key}_{_sr2}_{_ws2}_seed{_seed2}_{_model}.csv"
             _fpath = os.path.join(_plots_dir, _fname)
             pd.DataFrame({
