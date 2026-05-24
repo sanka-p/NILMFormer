@@ -232,40 +232,34 @@ def _(
         zoom_end = min(zoom_start + zoom_len, n_pts - 1)
         ymax_global = max(float(gt_power.max()) * 1.2, 1.0)
 
-        fig, ax = plt.subplots(1, 1, figsize=(10, 4), facecolor="white")
-        fig.patch.set_facecolor("white")
-        ax.set_facecolor("white")
+        fig, (ax, ax_zoom) = plt.subplots(1, 2, figsize=(14, 4),
+                                          gridspec_kw={"width_ratios": [3, 1]})
 
-        ax.plot(x, gt_power, color="green", lw=0.9, label="Ground-Truth", zorder=3)
-        ax.plot(x, pred, color="darkorange", lw=0.9, alpha=0.85, label="Prediction", zorder=2)
-        ax.axvspan(zoom_start, zoom_end, alpha=0.10, color="gray", zorder=1)
+        for a in (ax, ax_zoom):
+            a.set_facecolor("white")
 
+        ax.plot(x, gt_power, color="tab:green", lw=0.9, label="Ground-Truth")
+        ax.plot(x, pred, color="tab:orange", lw=0.9, alpha=0.85, label="Prediction")
+        ax.axvspan(zoom_start, zoom_end, alpha=0.12, color="steelblue")
         ax.set_xlim(0, n_pts - 1)
         ax.set_ylim(0, ymax_global)
-        ax.set_xlabel("Sampling points", fontsize=8)
-        ax.set_ylabel("Power (W)", fontsize=8)
-        ax.set_title(f"{model_name} — {app_name}", fontsize=9)
-        ax.legend(loc="upper right", fontsize=7, framealpha=0.7)
-        ax.tick_params(labelsize=7)
+        ax.set_xlabel("Sampling points", fontsize=9)
+        ax.set_ylabel("Power (W)", fontsize=9)
+        ax.set_title(f"{model_name} — {app_name}", fontsize=10)
+        ax.legend(fontsize=8, framealpha=0.7)
+        ax.tick_params(labelsize=8)
 
-        axins = inset_axes(
-            ax, width="38%", height="42%",
-            loc="upper left",
-            bbox_to_anchor=(0.01, 0.99, 1.0, 1.0),
-            bbox_transform=ax.transAxes,
-            borderpad=0,
-        )
-        axins.set_facecolor("white")
-        axins.plot(x[zoom_start:zoom_end], gt_power[zoom_start:zoom_end],
-                   color="green", lw=0.9)
-        axins.plot(x[zoom_start:zoom_end], pred[zoom_start:zoom_end],
-                   color="darkorange", lw=0.9, alpha=0.85)
-        axins.set_xlim(zoom_start, zoom_end)
-        axins.set_ylim(0, ymax_global)
-        axins.tick_params(labelsize=5)
-        mark_inset(ax, axins, loc1=2, loc2=3, fc="none", ec="0.45", lw=0.6)
+        ax_zoom.plot(x[zoom_start:zoom_end], gt_power[zoom_start:zoom_end],
+                     color="tab:green", lw=1.0, label="Ground-Truth")
+        ax_zoom.plot(x[zoom_start:zoom_end], pred[zoom_start:zoom_end],
+                     color="tab:orange", lw=1.0, alpha=0.85, label="Prediction")
+        ax_zoom.set_xlim(zoom_start, zoom_end)
+        ax_zoom.set_ylim(0, ymax_global)
+        ax_zoom.set_xlabel("Sampling points", fontsize=9)
+        ax_zoom.set_title("Zoom", fontsize=9)
+        ax_zoom.tick_params(labelsize=8)
 
-        fig.subplots_adjust(left=0.08, right=0.98, top=0.92, bottom=0.10)
+        fig.tight_layout()
         return fig
 
     def fig_to_image(fig):
