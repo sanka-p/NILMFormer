@@ -580,8 +580,13 @@ def _(
 
             _fig3 = make_single_figure(_gt3, _pred3, _model_name3, _fridge_app_name3, _zoom3)
             _png_path = os.path.join(_plots_dir3, f"{_stem}.png")
-            _fig3.savefig(_png_path, dpi=150, bbox_inches="tight", facecolor="white")
-            _tabs3[_model_name3] = fig_to_image(_fig3)
+            _buf3 = io.BytesIO()
+            _fig3.savefig(_buf3, format="png", dpi=150, bbox_inches="tight", facecolor="white")
+            plt.close(_fig3)
+            _img_bytes3 = _buf3.getvalue()
+            with open(_png_path, "wb") as _pf:
+                _pf.write(_img_bytes3)
+            _tabs3[_model_name3] = mo.image(src=_img_bytes3)
 
         _csv_output = mo.ui.tabs(_tabs3)
 
