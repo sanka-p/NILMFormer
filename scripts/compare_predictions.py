@@ -28,7 +28,9 @@ def _():
         split_train_test_nilmdataset,
         split_train_test_pdl_nilmdataset,
     )
+    from src.helpers.metrics import NILMmetrics
     return (
+        NILMmetrics,
         REFIT_DataBuilder,
         UKDALE_DataBuilder,
         glob,
@@ -60,20 +62,24 @@ def _(mo):
     window_size_num = mo.ui.number(value=512, label="Window size")
     seed_num = mo.ui.number(value=0, label="Seed")
     zoom_frac_num = mo.ui.number(value=0.15, label="Zoom fraction (0–1)")
+    max_pts_num = mo.ui.number(value=0, label="Max points to visualize (0 = all)")
+    threshold_num = mo.ui.number(value=10, label="On/off threshold (W)")
     load_btn = mo.ui.run_button(label="Load & Plot")
 
     mo.vstack([
         mo.hstack([result_path_input, data_path_input]),
-        mo.hstack([dataset_dd, sr_dd, window_size_num, seed_num, zoom_frac_num]),
+        mo.hstack([dataset_dd, sr_dd, window_size_num, seed_num, zoom_frac_num, max_pts_num, threshold_num]),
         load_btn,
     ])
     return (
         data_path_input,
         dataset_dd,
         load_btn,
+        max_pts_num,
         result_path_input,
         seed_num,
         sr_dd,
+        threshold_num,
         window_size_num,
         zoom_frac_num,
     )
@@ -281,6 +287,7 @@ def _(
     load_predictions,
     load_test_data,
     make_figure,
+    max_pts_num,
     mo,
     np,
     os,
@@ -324,22 +331,105 @@ def _(
             _result_path, _dataset, _app_key, _sr, _ws, _seed
         )
 
-        _gt_power = _data_test[:, 1, 0, :].reshape(-1).astype(float)
+        _gt_power_full = _data_test[:, 1, 0, :].reshape(-1).astype(float)
+        _total_pts = len(_gt_power_full)
+        _max_pts = int(max_pts_num.value)
+        _gt_power = _gt_power_full[:_max_pts] if _max_pts > 0 else _gt_power_full
         _predictions_full = {
-            name: pred.reshape(-1).astype(float)
+            name: (pred.reshape(-1).astype(float)[:_max_pts] if _max_pts > 0 else pred.reshape(-1).astype(float))
             for name, pred in _predictions_windowed.items()
         }
 
         _fig = make_figure(_gt_power, _predictions_full, _app_name, _zoom_frac)
         _n_models = len(_predictions_full)
+        _pts_note = f"{len(_gt_power):,} / {_total_pts:,} pts (max available)"
         _caption = (
-            mo.md(f"{_n_models} model(s) — {len(_gt_power):,} sampling points")
+            mo.md(f"{_n_models} model(s) — {_pts_note}")
             if _n_models
-            else mo.md(f"No checkpoints found at `{_result_path}`")
+            else mo.md(f"No checkpoints found at `{_result_path}` — {_pts_note}")
         )
         _tabs[_app_key] = mo.vstack([fig_to_image(_fig), _caption])
 
     mo.ui.tabs(_tabs)
+    return
+
+
+@app.cell
+def _(
+    NILMmetrics,
+    data_path_input,
+    dataset_dd,
+    load_btn,
+    load_predictions,
+    load_test_data,
+    max_pts_num,
+    mo,
+    np,
+    os,
+    pd,
+    result_path_input,
+    seed_num,
+    sr_dd,
+    threshold_num,
+    window_size_num,
+    yaml,
+):
+    mo.stop(not load_btn.value, mo.md("Configure settings above and click **Load & Plot** to see metrics."))
+
+    with open(
+        os.path.join(os.path.dirname(__file__), "..", "configs", "datasets.yaml")
+    ) as _mf:
+        _metrics_cfg = yaml.safe_load(_mf)
+
+    _m_dataset = dataset_dd.value
+    _m_sr = sr_dd.value
+    _m_ws = int(window_size_num.value)
+    _m_seed = int(seed_num.value)
+    _m_data_path = data_path_input.value
+    _m_result_path = result_path_input.value
+    _m_max_pts = int(max_pts_num.value)
+    _m_threshold = float(threshold_num.value)
+    _nilm_metrics = NILMmetrics()
+
+    _rows = []
+    for _app_key, _app_cfg in _metrics_cfg[_m_dataset].items():
+        _app_name = _app_cfg["app"].strip()
+        try:
+            _data_test = load_test_data(_m_dataset, _app_cfg, _m_data_path, _m_sr, _m_ws, _m_seed)
+        except Exception:
+            continue
+        if _data_test is None or len(_data_test) == 0:
+            continue
+
+        _preds = load_predictions(_m_result_path, _m_dataset, _app_key, _m_sr, _m_ws, _m_seed)
+        _gt_full = _data_test[:, 1, 0, :].reshape(-1).astype(float)
+        _gt = _gt_full[:_m_max_pts] if _m_max_pts > 0 else _gt_full
+        _gt_state = (_gt > _m_threshold).astype(int)
+
+        for _model_name, _pred_win in _preds.items():
+            _pred_full = _pred_win.reshape(-1).astype(float)
+            _pred = _pred_full[:_m_max_pts] if _m_max_pts > 0 else _pred_full
+            _pred_state = (_pred > _m_threshold).astype(int)
+
+            _reg = _nilm_metrics(y=_gt, y_hat=_pred)
+            _cls = _nilm_metrics(y_state=_gt_state, y_hat_state=_pred_state)
+
+            _rows.append({
+                "Appliance": _app_name,
+                "Model": _model_name,
+                "MAE": _reg["MAE"],
+                "SAE": _reg["SAE"],
+                "F1": _cls["F1_SCORE"],
+            })
+
+    if _rows:
+        _metrics_df = pd.DataFrame(_rows).sort_values(["Appliance", "Model"])
+        mo.vstack([
+            mo.md(f"### Metrics (threshold = {_m_threshold} W)"),
+            mo.ui.table(_metrics_df, sortable=True, filterable=True),
+        ])
+    else:
+        mo.md("No predictions found — run models first.")
     return
 
 
