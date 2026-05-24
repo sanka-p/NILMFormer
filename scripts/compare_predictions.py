@@ -16,6 +16,7 @@ def _():
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    from matplotlib.patches import Rectangle, ConnectionPatch
     plt.style.use("default")
     plt.rcParams.update({
         "figure.facecolor": "white",
@@ -62,8 +63,10 @@ def _():
     )
     from src.helpers.metrics import NILMmetrics
     return (
+        ConnectionPatch,
         NILMmetrics,
         REFIT_DataBuilder,
+        Rectangle,
         UKDALE_DataBuilder,
         glob,
         io,
@@ -117,7 +120,9 @@ def _(mo):
 
 @app.cell
 def _(
+    ConnectionPatch,
     REFIT_DataBuilder,
+    Rectangle,
     UKDALE_DataBuilder,
     glob,
     io,
@@ -227,7 +232,21 @@ def _(
         for spine in axins.spines.values():
             spine.set_linewidth(0.6)
             spine.set_edgecolor("black")
-        ax.indicate_inset_zoom(axins, edgecolor="black", lw=0.5, alpha=0.85)
+
+        span_top = zoom_max * 1.15
+        rect = Rectangle(
+            (zs, 0), ze - zs, span_top,
+            fill=False, edgecolor="0.35", lw=0.5, ls="-", zorder=1.5,
+        )
+        ax.add_patch(rect)
+
+        for x_data in (zs, ze):
+            con = ConnectionPatch(
+                xyA=(x_data, span_top), coordsA=ax.transData,
+                xyB=(x_data, 0), coordsB=axins.transData,
+                color="0.35", lw=0.5, alpha=0.9, zorder=1.5,
+            )
+            ax.get_figure().add_artist(con)
 
     def _ymax_with_headroom(gt_power, predictions):
         ymax_data = max(float(gt_power.max()), 1.0)
