@@ -6,6 +6,8 @@
 #
 #################################################################################################################
 
+import csv
+import os
 import torch
 import logging
 
@@ -87,6 +89,18 @@ def get_model_instance(name_model, c_in, window_size, **kwargs):
         raise ValueError("Model name {} unknown".format(name_model))
 
     return inst
+
+
+_TIMING_CSV = os.path.join(os.path.dirname(__file__), "..", "..", "timing.csv")
+
+
+def _append_timing_csv(experiment_name, train_time, eval_time):
+    write_header = not os.path.exists(_TIMING_CSV)
+    with open(_TIMING_CSV, "a", newline="") as f:
+        writer = csv.writer(f)
+        if write_header:
+            writer.writerow(["experiment", "train_time", "eval_time"])
+        writer.writerow([experiment_name, train_time, eval_time])
 
 
 def nilm_model_training(inst_model, tuple_data, scaler, expes_config):
@@ -225,6 +239,11 @@ def nilm_model_training(inst_model, tuple_data, scaler, expes_config):
         )
 
     model_trainer.save()
+    _append_timing_csv(
+        expes_config.result_path,
+        model_trainer.train_time,
+        model_trainer.log.get("test_metrics_time"),
+    )
     logging.info(
         "Training and eval completed! Model weights and log save at: {}.pt".format(expes_config.result_path)
     )
@@ -283,6 +302,11 @@ def tser_model_training(inst_model, tuple_data, scaler, expes_config):
         mask="test_metrics",
     )
 
+    _append_timing_csv(
+        expes_config.result_path,
+        model_trainer.train_time,
+        model_trainer.log.get("test_metrics_time"),
+    )
     logging.info(
         "Training and eval completed! Model weights and log save at: {}".format(
             expes_config.result_path
