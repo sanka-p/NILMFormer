@@ -16,7 +16,11 @@ COLUMNS = [
 # {(Model, Dataset, Appliance, SamplingRate, WindowSize): [metrics_dict, ...]}
 rows = defaultdict(list)
 
-for pt_file in sorted(RESULT_DIR.rglob("*.pt")):
+pt_files = sorted(RESULT_DIR.rglob("*.pt"))
+total = len(pt_files)
+
+for i, pt_file in enumerate(pt_files, 1):
+    print(f"[{i}/{total}] {pt_file}", flush=True)
     # result/{Dataset}_{Appliance}_{SamplingRate}/{WindowSize}/{Model}_{fold}.pt
     parts = pt_file.parts
     dataset_appliance_sr = parts[-3]  # e.g. UKDALE_Dishwasher_10s
