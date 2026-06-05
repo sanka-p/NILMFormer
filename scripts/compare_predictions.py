@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.10.0"
+__generated_with = "0.23.5"
 app = marimo.App(width="medium")
 
 
@@ -62,6 +62,7 @@ def _():
         split_train_test_pdl_nilmdataset,
     )
     from src.helpers.metrics import NILMmetrics
+
     return (
         ConnectionPatch,
         NILMmetrics,
@@ -70,15 +71,12 @@ def _():
         UKDALE_DataBuilder,
         glob,
         io,
-        matplotlib,
         mo,
         np,
         os,
         pd,
         plt,
-        split_train_test_nilmdataset,
         split_train_test_pdl_nilmdataset,
-        sys,
         torch,
         yaml,
     )
@@ -308,13 +306,12 @@ def _(
         x = np.arange(n_pts)
         ymax = _ymax_with_headroom(gt_power, {"_": pred})
         scale, ylabel = _power_unit(ymax)
-        zoom_start, zoom_end = _pick_zoom(gt_power, zoom_frac)
 
         fig, ax = plt.subplots(
             1, 1, figsize=(9.5, 3.0), constrained_layout=True, facecolor="white",
         )
         _draw_panel(
-            ax, x, gt_power, pred, zoom_start, zoom_end, ymax, scale, ylabel,
+            ax, x, gt_power, pred, 0, 0, ymax, scale, ylabel,
             title=f"{model_name} — {app_name}",
         )
         handles, labels = ax.get_legend_handles_labels()
@@ -329,7 +326,13 @@ def _(
         buf.seek(0)
         return mo.image(src=buf.read())
 
-    return fig_to_image, load_predictions, load_test_data, make_figure, make_single_figure
+    return (
+        fig_to_image,
+        load_predictions,
+        load_test_data,
+        make_figure,
+        make_single_figure,
+    )
 
 
 @app.cell
@@ -343,7 +346,6 @@ def _(
     make_figure,
     max_pts_num,
     mo,
-    np,
     os,
     result_path_input,
     seed_num,
@@ -427,7 +429,6 @@ def _(
     load_test_data,
     max_pts_num,
     mo,
-    np,
     os,
     pd,
     result_path_input,
@@ -514,7 +515,6 @@ def _(
     load_predictions,
     load_test_data,
     mo,
-    np,
     os,
     pd,
     result_path_input,
@@ -582,8 +582,8 @@ def _(
 @app.cell
 def _(
     dataset_dd,
-    fig_to_image,
     glob,
+    io,
     make_single_figure,
     max_pts_num,
     mo,
@@ -630,13 +630,13 @@ def _(
         _csv_output = mo.md(f"No CSVs found matching `plots/{_dataset3}_{_fridge_key3}_{_sr3}_{_ws3}_seed{_seed3}_*.csv`. Click **Save Fridge CSVs** first.")
     else:
         _tabs3 = {}
+        _combined_data3 = []
         for _csv_path in _csv_files:
             _stem = os.path.splitext(os.path.basename(_csv_path))[0]
             _model_name3 = _stem.split(f"_seed{_seed3}_", 1)[-1]
             _df = pd.read_csv(_csv_path)
             _gt3 = _df["ground_truth"].to_numpy()
             _pred3 = _df["prediction"].to_numpy()
-            _total_pts3 = len(_gt3)
             if _max_pts3 > 0:
                 _gt3 = _gt3[:_max_pts3]
                 _pred3 = _pred3[:_max_pts3]
@@ -652,10 +652,120 @@ def _(
             with open(_png_path, "wb") as _pf:
                 _pf.write(_img_bytes3)
             _tabs3[_model_name3] = mo.image(src=_img_bytes3)
+            _combined_data3.append((_model_name3, _gt3, _pred3))
+
+        _n3 = len(_combined_data3)
+        _fig_c, _axes_c = plt.subplots(_n3, 1, figsize=(9.5, 2.8 * _n3), constrained_layout=True, facecolor="white")
+        if _n3 == 1:
+            _axes_c = [_axes_c]
+        for _ax_c, (_mname_c, _gt_c, _pred_c) in zip(_axes_c, _combined_data3):
+            _x_c = np.arange(len(_gt_c))
+            _ax_c.plot(_x_c, _pred_c, color="#ff7f0e", lw=0.9)
+            _ax_c.plot(_x_c, _gt_c, color="#2ca02c", lw=0.9)
+            _ax_c.set_xlim(0, len(_gt_c) - 1)
+            _ymax_c = max(float(np.percentile(_gt_c, 99.5)), float(np.percentile(_pred_c, 99.5)), 1.0)
+            _ax_c.set_ylim(0, _ymax_c * 1.05)
+            _ax_c.set_xticks([])
+            _ax_c.set_yticks([])
+            for _sp_c in _ax_c.spines.values():
+                _sp_c.set_visible(False)
+        _combined_png_path = os.path.join(_plots_dir3, f"{_dataset3}_{_fridge_key3}_{_sr3}_{_ws3}_seed{_seed3}_combined.png")
+        _fig_c.savefig(_combined_png_path, dpi=150, bbox_inches="tight", facecolor="white")
+        plt.close(_fig_c)
 
         _csv_output = mo.ui.tabs(_tabs3)
 
     _csv_output
+    return
+
+
+@app.cell
+def _(
+    dataset_dd,
+    glob,
+    io,
+    mo,
+    np,
+    os,
+    pd,
+    plot_csv_btn,
+    plt,
+    seed_num,
+    sr_dd,
+    window_size_num,
+    yaml,
+):
+    mo.stop(not plot_csv_btn.value, mo.md("Click **Plot Fridge from CSV** to generate the combined figure."))
+
+    _MODEL_ORDER = ["bert4nilm", "nilmformer", "bilstm", "cnn1d"]
+
+    with open(
+        os.path.join(os.path.dirname(__file__), "..", "configs", "datasets.yaml")
+    ) as _f4:
+        _cfg4 = yaml.safe_load(_f4)
+
+    _dataset4 = dataset_dd.value
+    _sr4 = sr_dd.value
+    _ws4 = int(window_size_num.value)
+    _seed4 = int(seed_num.value)
+
+    _fridge_key4 = None
+    for _k4, _v4 in _cfg4[_dataset4].items():
+        if any(word in _v4["app"].lower() for word in ("fridge", "refrigerator")):
+            _fridge_key4 = _k4
+            _fridge_app_name4 = _v4["app"].strip()
+            break
+
+    _plots_dir4 = os.path.join(os.path.dirname(__file__), "..", "plots")
+    _pattern4 = os.path.join(
+        _plots_dir4,
+        f"{_dataset4}_{_fridge_key4}_{_sr4}_{_ws4}_seed{_seed4}_*.csv",
+    )
+    _all_csvs4 = {
+        os.path.splitext(os.path.basename(p))[0].split(f"_seed{_seed4}_", 1)[-1].lower(): p
+        for p in glob.glob(_pattern4)
+    }
+
+    _matched = [(m, _all_csvs4[m]) for m in _MODEL_ORDER if m in _all_csvs4]
+
+    if not _matched:
+        _combined_output = mo.md(f"No CSVs found for models {_MODEL_ORDER}. Click **Save Fridge CSVs** first.")
+    else:
+        _n = len(_matched)
+        _fig4, _axes4 = plt.subplots(_n, 1, figsize=(9.5, 2.8 * _n), constrained_layout=True, facecolor="white")
+        if _n == 1:
+            _axes4 = [_axes4]
+
+        _colors = {"gt": "#2ca02c", "pred": "#ff7f0e"}
+        _legend_added = False
+
+        for _ax4, (_mname4, _csv_path4) in zip(_axes4, _matched):
+            _df4 = pd.read_csv(_csv_path4)
+            _gt4 = _df4["ground_truth"].to_numpy()
+            _pred4 = _df4["prediction"].to_numpy()
+            _x4 = np.arange(len(_gt4))
+            _ax4.plot(_x4, _pred4, color=_colors["pred"], lw=0.9, label="Prediction")
+            _ax4.plot(_x4, _gt4, color=_colors["gt"], lw=0.9, label="Ground-Truth")
+            _ax4.set_xlim(0, len(_gt4) - 1)
+            _ax4.set_ylim(0, max(float(_gt4.max()), float(_pred4.max()), 1.0) * 1.15)
+            _ax4.set_ylabel("Power (W)")
+            _ax4.set_title(_mname4.upper(), loc="left")
+            for _sp in _ax4.spines.values():
+                _sp.set_linewidth(0.6)
+
+        _axes4[-1].set_xlabel("Sampling points")
+        _handles4, _labels4 = _axes4[0].get_legend_handles_labels()
+        _fig4.legend(_handles4, _labels4, loc="upper center", ncols=2, frameon=False, bbox_to_anchor=(0.5, 1.01))
+
+        _buf4 = io.BytesIO()
+        _fig4.savefig(_buf4, format="png", dpi=150, bbox_inches="tight", facecolor="white")
+        _combined_png = os.path.join(_plots_dir4, f"{_dataset4}_{_fridge_key4}_{_sr4}_{_ws4}_seed{_seed4}_combined.png")
+        with open(_combined_png, "wb") as _pf4:
+            _pf4.write(_buf4.getvalue())
+        plt.close(_fig4)
+        _combined_output = mo.image(src=_buf4.getvalue())
+
+    _combined_output
     return
 
 
