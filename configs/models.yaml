@@ -181,11 +181,14 @@ NILMFormer:
 
 TCN_KL:
   model_kwargs:
-    weights_path: "/abs/path/to/tcn.ckpt"
-    meta_path: null
+    weights_path: "/home/sanka/projects/nilm/NILM_DeepL-TCN/TCNpandula/tcn_ukdale.ckpt"
+    meta_path: "/home/sanka/projects/nilm/NILM_DeepL-TCN/TCNpandula/tcn_meta.json"
     appliance_name_map:
-      WashingMachine: Washingmachine
-      Fridge: Refrigerator
+      Kettle: kettle
+      Fridge: fridge
+      Dishwasher: dish washer
+      WashingMachine: washing machine
+      Microwave: microwave
   model_training_param:
     lr: !!float 0.0
     wd: !!float 0.0
