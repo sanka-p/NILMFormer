@@ -185,10 +185,15 @@ TCN_KL:
     meta_path: "/home/sanka/projects/nilm/NILM_DeepL-TCN/TCNpandula/tcn_meta.json"
     appliance_name_map:
       Kettle: kettle
+      kettle: kettle
       Fridge: fridge
+      fridge: fridge
       Dishwasher: dish washer
+      dishwasher: dish washer
       WashingMachine: washing machine
+      washing_machine: washing machine
       Microwave: microwave
+      microwave: microwave
   model_training_param:
     lr: !!float 0.0
     wd: !!float 0.0
