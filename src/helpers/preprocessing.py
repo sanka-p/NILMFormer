@@ -337,6 +337,7 @@ class UKDALE_DataBuilder(object):
         window_stride=None,
         soft_label=False,
         use_status_from_kelly_paper=True,
+        synth_aggregate_apps=None,
     ):
         # =============== Class variables =============== #
         self.data_path = data_path
@@ -344,6 +345,7 @@ class UKDALE_DataBuilder(object):
         self.sampling_rate = sampling_rate
         self.window_size = window_size
         self.soft_label = soft_label
+        self.synth_aggregate_apps = synth_aggregate_apps
 
         if isinstance(self.mask_app, str):
             self.mask_app = [self.mask_app]
@@ -603,7 +605,11 @@ class UKDALE_DataBuilder(object):
         Return : np.ndarray instance
         """
         stems = np.empty((1 + (len(self.mask_app) - 1) * 2, dataframe.shape[0]))
-        stems[0, :] = dataframe["aggregate"].values
+        stems[0, :] = (
+            dataframe["synth_aggregate"].values
+            if "synth_aggregate" in dataframe.columns
+            else dataframe["aggregate"].values
+        )
 
         key = 1
         for appliance in self.mask_app[1:]:
@@ -739,6 +745,41 @@ class UKDALE_DataBuilder(object):
             else:
                 house_data[appliance] = 0
                 house_data[appliance + "_status"] = 0
+
+        if self.synth_aggregate_apps is not None:
+            # Load extra appliance channels not already in mask_app, then sum all
+            # synth_aggregate_apps to form a clean aggregate over the 5 evaluated appliances.
+            already_loaded = set(self.mask_app[1:])
+            for appliance in self.synth_aggregate_apps:
+                if appliance in already_loaded:
+                    continue
+                app_ids = house_label.loc[
+                    house_label["appliance_name"] == appliance, "id"
+                ].values
+                if len(app_ids) == 0:
+                    house_data[appliance] = 0.0
+                    continue
+                appl_data = pd.read_csv(
+                    path_house + "channel_" + str(app_ids[0]) + ".dat",
+                    sep=" ",
+                    header=None,
+                )
+                appl_data.columns = ["time", appliance]
+                appl_data["time"] = pd.to_datetime(appl_data["time"], unit="s")
+                appl_data = appl_data.set_index("time")
+                appl_data = appl_data.resample("10s").mean()
+                appl_data[appliance] = self._fill_long_gaps_with_zero(appl_data[appliance])
+                appl_data = appl_data.ffill(limit=6)
+                appl_data[appl_data < 5] = 0
+                appl_data = appl_data.clip(lower=0, upper=self.cutoff)
+                if self.sampling_rate != "10s":
+                    appl_data = appl_data.resample(self.sampling_rate).mean()
+                house_data = pd.merge(house_data, appl_data, how="left", on="time")
+                house_data[appliance] = house_data[appliance].fillna(0.0)
+
+            house_data["synth_aggregate"] = sum(
+                house_data[app].fillna(0.0) for app in self.synth_aggregate_apps
+            )
 
         return house_data
 

@@ -32,8 +32,10 @@ NILM_MODELS = [
 ]
 TSER_MODELS = ["ConvNet", "ResNet", "Inception"]
 
+_UKDALE_ALL_APPS = ["fridge", "washing_machine", "kettle", "dishwasher", "microwave"]
 
-def prepare_data(base_config):
+
+def prepare_data(base_config, name_model=None):
     """
     Load, split, and scale data once for a given (dataset, appliance, window_size, seed).
     Returns scaled data splits, scaler, cutoff, and threshold.
@@ -47,6 +49,7 @@ def prepare_data(base_config):
             mask_app=base_config["app"],
             sampling_rate=base_config["sampling_rate"],
             window_size=base_config["window_size"],
+            synth_aggregate_apps=_UKDALE_ALL_APPS if name_model == "TCN_KL" else None,
         )
 
         data, st_date = data_builder.get_nilm_dataset(house_indicies=[1, 2, 3, 4, 5])

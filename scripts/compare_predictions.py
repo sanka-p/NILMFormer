@@ -63,13 +63,13 @@ def _():
     )
     from src.helpers.metrics import NILMmetrics
 
+    import plotly.graph_objects as go
+
     return (
-        ConnectionPatch,
-        NILMmetrics,
         REFIT_DataBuilder,
-        Rectangle,
         UKDALE_DataBuilder,
         glob,
+        go,
         io,
         mo,
         np,
@@ -90,7 +90,7 @@ def _(mo):
     sr_dd = mo.ui.dropdown(
         ["10s", "1min", "10min", "30min"], value="10s", label="Sampling rate"
     )
-    window_size_num = mo.ui.number(value=512, label="Window size")
+    window_size_num = mo.ui.number(value=256, label="Window size")
     seed_num = mo.ui.number(value=0, label="Seed")
     zoom_frac_num = mo.ui.number(value=0.15, label="Zoom fraction (0–1)")
     max_pts_num = mo.ui.number(value=0, label="Max points to visualize (0 = all)")
@@ -105,31 +105,19 @@ def _(mo):
     return (
         data_path_input,
         dataset_dd,
-        load_btn,
-        max_pts_num,
         result_path_input,
         seed_num,
         sr_dd,
-        threshold_num,
         window_size_num,
-        zoom_frac_num,
     )
 
 
 @app.cell
 def _(
-    ConnectionPatch,
     REFIT_DataBuilder,
-    Rectangle,
     UKDALE_DataBuilder,
-    glob,
-    io,
     mo,
-    np,
-    os,
-    plt,
     split_train_test_pdl_nilmdataset,
-    torch,
 ):
     def load_test_data(dataset, app_cfg, data_path, sr, ws, seed):
         if dataset == "UKDALE":
@@ -157,6 +145,71 @@ def _(
             )
         return data_test
 
+    save_data_btn = mo.ui.run_button(label="Save Data CSVs")
+    mo.vstack([mo.md("### Save Data Samples to CSV"), save_data_btn])
+    return load_test_data, save_data_btn
+
+
+@app.cell
+def _(
+    data_path_input,
+    dataset_dd,
+    load_test_data,
+    mo,
+    os,
+    pd,
+    save_data_btn,
+    seed_num,
+    sr_dd,
+    window_size_num,
+    yaml,
+):
+    mo.stop(not save_data_btn.value, mo.md("Click **Save Data CSVs** to cache data samples."))
+
+    with open(
+        os.path.join(os.path.dirname(__file__), "..", "configs", "datasets.yaml")
+    ) as _fds:
+        _ds_cfg = yaml.safe_load(_fds)
+
+    _ds = dataset_dd.value
+    _ds_sr = sr_dd.value
+    _ds_ws = int(window_size_num.value)
+    _ds_seed = int(seed_num.value)
+    _ds_data_path = data_path_input.value
+
+    _ds_csv_root = os.path.join(os.path.dirname(__file__), "..", "data_csv")
+    os.makedirs(_ds_csv_root, exist_ok=True)
+
+    _ds_saved_dirs = []
+    for _ds_app_key, _ds_app_cfg in _ds_cfg[_ds].items():
+        try:
+            _ds_data_test = load_test_data(_ds, _ds_app_cfg, _ds_data_path, _ds_sr, _ds_ws, _ds_seed)
+        except Exception:
+            continue
+        if _ds_data_test is None or len(_ds_data_test) == 0:
+            continue
+        _ds_app_dir = os.path.join(
+            _ds_csv_root, f"{_ds}_{_ds_app_key}_{_ds_sr}_{_ds_ws}_seed{_ds_seed}"
+        )
+        os.makedirs(_ds_app_dir, exist_ok=True)
+        _ds_n = len(_ds_data_test)
+        for _ds_i in range(_ds_n):
+            pd.DataFrame({
+                "aggregate": _ds_data_test[_ds_i, 0, 0, :].astype(float),
+                "ground_truth": _ds_data_test[_ds_i, 1, 0, :].astype(float),
+            }).to_csv(os.path.join(_ds_app_dir, f"{_ds_i}.csv"), index=False)
+        _ds_saved_dirs.append(f"{os.path.basename(_ds_app_dir)}/ ({_ds_n} samples)")
+
+    (
+        mo.md("**Saved:**\n" + "\n".join(f"- `data_csv/{d}`" for d in _ds_saved_dirs))
+        if _ds_saved_dirs
+        else mo.md("**No data saved.**")
+    )
+    return
+
+
+@app.cell
+def _(glob, np, os, torch):
     def load_predictions(result_path, dataset, appliance_key, sr, ws, seed):
         ckpt_dir = os.path.join(result_path, f"{dataset}_{appliance_key}_{sr}", str(ws))
         predictions = {}
@@ -173,599 +226,284 @@ def _(
                 pass
         return predictions
 
-    def _pick_zoom(gt_power, zoom_frac):
-        n_pts = len(gt_power)
-        zoom_len = max(int(n_pts * zoom_frac), 50)
-        kernel = np.ones(zoom_len) / zoom_len
-        smoothed = np.convolve(gt_power, kernel, mode="valid")
-        zoom_start = int(np.argmax(smoothed)) if len(smoothed) else 0
-        zoom_end = min(zoom_start + zoom_len, n_pts - 1)
-        return zoom_start, zoom_end
-
-    def _power_unit(ymax_w):
-        if ymax_w >= 1500:
-            return 1.0 / 1000.0, "Power (kW)"
-        return 1.0, "Power (W)"
-
-    def _draw_panel(ax, x, gt, pred, zoom_start, zoom_end,
-                    ymax, scale, ylabel, title):
-        n_pts = len(gt)
-        gt_s = gt * scale
-        pred_s = pred * scale
-        ymax_s = ymax * scale
-
-        ax.plot(x, pred_s, color="#ff7f0e", lw=0.9, label="Prediction", zorder=2)
-        ax.plot(x, gt_s, color="#2ca02c", lw=0.9, label="Ground-Truth", zorder=3)
-        ax.set_xlim(0, n_pts - 1)
-        ax.set_ylim(0, ymax_s)
-        ax.set_xlabel("Sampling points")
-        ax.set_ylabel(ylabel)
-        ax.set_title(title, loc="left")
-        for spine in ax.spines.values():
-            spine.set_linewidth(0.6)
-
-        zs = max(int(zoom_start), 0)
-        ze = min(int(zoom_end), n_pts - 1)
-        if ze <= zs:
-            return
-
-        span_frac_l = zs / max(n_pts - 1, 1)
-        span_frac_r = ze / max(n_pts - 1, 1)
-        span_width = span_frac_r - span_frac_l
-        inset_width = min(max(span_width * 1.6, 0.18), 0.55)
-        center = (span_frac_l + span_frac_r) / 2
-        x0 = min(max(center - inset_width / 2, 0.02), 0.98 - inset_width)
-        inset_rect = (x0, 0.58, inset_width, 0.38)
-
-        axins = ax.inset_axes(inset_rect)
-        axins.plot(x[zs:ze + 1], pred_s[zs:ze + 1], color="#ff7f0e", lw=0.9, zorder=2)
-        axins.plot(x[zs:ze + 1], gt_s[zs:ze + 1], color="#2ca02c", lw=0.9, zorder=3)
-
-        zoom_max = float(max(gt_s[zs:ze + 1].max(), pred_s[zs:ze + 1].max(), 1e-6))
-        axins.set_xlim(zs, ze)
-        axins.set_ylim(0, zoom_max * 1.1)
-        axins.set_xticks([])
-        axins.set_yticks([])
-        axins.set_facecolor("white")
-        for spine in axins.spines.values():
-            spine.set_linewidth(0.6)
-            spine.set_edgecolor("black")
-
-        span_top = zoom_max * 1.15
-        rect = Rectangle(
-            (zs, 0), ze - zs, span_top,
-            fill=False, edgecolor="0.35", lw=0.5, ls="-", zorder=1.5,
-        )
-        ax.add_patch(rect)
-
-        for x_data in (zs, ze):
-            con = ConnectionPatch(
-                xyA=(x_data, span_top), coordsA=ax.transData,
-                xyB=(x_data, 0), coordsB=axins.transData,
-                color="0.35", lw=0.5, alpha=0.9, zorder=1.5,
-            )
-            ax.get_figure().add_artist(con)
-
-    def _ymax_with_headroom(gt_power, predictions):
-        ymax_data = max(float(gt_power.max()), 1.0)
-        for p in predictions.values():
-            ymax_data = max(ymax_data, float(p.max()))
-        return ymax_data * 1.95
-
-    def make_figure(gt_power, predictions, app_name, zoom_frac):
-        n_pts = len(gt_power)
-        x = np.arange(n_pts)
-        model_names = list(predictions.keys())
-        n_models = len(model_names)
-
-        ymax = _ymax_with_headroom(gt_power, predictions)
-        scale, ylabel = _power_unit(ymax)
-        zoom_start, zoom_end = _pick_zoom(gt_power, zoom_frac)
-
-        if n_models == 0:
-            fig, ax = plt.subplots(1, 1, figsize=(7.2, 2.4), constrained_layout=True)
-            ax.plot(x, gt_power * scale, color="#2ca02c", lw=0.9, label="Ground-Truth")
-            ax.set_xlabel("Sampling points")
-            ax.set_ylabel(ylabel)
-            ax.set_title(f"{app_name} — no predictions loaded", loc="left")
-            ax.legend(frameon=False)
-            return fig
-
-        ncols = 3 if n_models >= 3 else n_models
-        nrows = (n_models + ncols - 1) // ncols
-        fig, axes = plt.subplots(
-            nrows, ncols, figsize=(4.6 * ncols, 2.6 * nrows), squeeze=False,
-            constrained_layout=True, facecolor="white",
-        )
-
-        handles, labels = None, None
-        for i, model_name in enumerate(model_names):
-            row, col = divmod(i, ncols)
-            ax = axes[row][col]
-            _draw_panel(
-                ax, x, gt_power, predictions[model_name],
-                zoom_start, zoom_end, ymax, scale, ylabel,
-                title=f"({chr(ord('a') + i)}) {model_name}",
-            )
-            if handles is None:
-                handles, labels = ax.get_legend_handles_labels()
-
-        for j in range(n_models, nrows * ncols):
-            row, col = divmod(j, ncols)
-            axes[row][col].set_visible(False)
-
-        if handles:
-            fig.legend(handles, labels, loc="upper center", ncols=2,
-                       frameon=False, bbox_to_anchor=(0.5, 1.02))
-        fig.suptitle(app_name, fontsize=10, y=1.06, x=0.02, ha="left",
-                     fontweight="bold")
-        return fig
-
-    def make_single_figure(gt_power, pred, model_name, app_name, zoom_frac):
-        n_pts = len(gt_power)
-        x = np.arange(n_pts)
-        ymax = _ymax_with_headroom(gt_power, {"_": pred})
-        scale, ylabel = _power_unit(ymax)
-
-        fig, ax = plt.subplots(
-            1, 1, figsize=(9.5, 3.0), constrained_layout=True, facecolor="white",
-        )
-        _draw_panel(
-            ax, x, gt_power, pred, 0, 0, ymax, scale, ylabel,
-            title=f"{model_name} — {app_name}",
-        )
-        handles, labels = ax.get_legend_handles_labels()
-        fig.legend(handles, labels, loc="upper center", ncols=2,
-                   frameon=False, bbox_to_anchor=(0.5, 1.04))
-        return fig
-
-    def fig_to_image(fig):
-        buf = io.BytesIO()
-        fig.savefig(buf, format="png", dpi=120, bbox_inches="tight")
-        plt.close(fig)
-        buf.seek(0)
-        return mo.image(src=buf.read())
-
-    return (
-        fig_to_image,
-        load_predictions,
-        load_test_data,
-        make_figure,
-        make_single_figure,
-    )
-
-
-@app.cell
-def _(
-    data_path_input,
-    dataset_dd,
-    fig_to_image,
-    load_btn,
-    load_predictions,
-    load_test_data,
-    make_figure,
-    max_pts_num,
-    mo,
-    os,
-    result_path_input,
-    seed_num,
-    sr_dd,
-    window_size_num,
-    yaml,
-    zoom_frac_num,
-):
-    mo.stop(not load_btn.value, mo.md("Configure settings above and click **Load & Plot**."))
-
-    with open(
-        os.path.join(os.path.dirname(__file__), "..", "configs", "datasets.yaml")
-    ) as _f:
-        _datasets_cfg = yaml.safe_load(_f)
-
-    _dataset = dataset_dd.value
-    _sr = sr_dd.value
-    _ws = int(window_size_num.value)
-    _seed = int(seed_num.value)
-    _zoom_frac = float(zoom_frac_num.value)
-    _data_path = data_path_input.value
-    _result_path = result_path_input.value
-    _appliances_cfg = _datasets_cfg[_dataset]
-
-    _plots_dir = os.path.join(os.path.dirname(__file__), "..", "plots")
-    os.makedirs(_plots_dir, exist_ok=True)
-
-    _tabs = {}
-    for _app_key, _app_cfg in _appliances_cfg.items():
-        _app_name = _app_cfg["app"].strip()
-        try:
-            _data_test = load_test_data(_dataset, _app_cfg, _data_path, _sr, _ws, _seed)
-        except Exception as _e:
-            _tabs[_app_key] = mo.md(f"**Error loading data:** {_e}")
-            continue
-
-        if _data_test is None or len(_data_test) == 0:
-            _tabs[_app_key] = mo.md(f"No test data for **{_app_name}**.")
-            continue
-
-        _predictions_windowed = load_predictions(
-            _result_path, _dataset, _app_key, _sr, _ws, _seed
-        )
-
-        _gt_power_full = _data_test[:, 1, 0, :].reshape(-1).astype(float)
-        _total_pts = len(_gt_power_full)
-        _max_pts = int(max_pts_num.value)
-        _gt_power = _gt_power_full[:_max_pts] if _max_pts > 0 else _gt_power_full
-        _predictions_full = {
-            name: (pred.reshape(-1).astype(float)[:_max_pts] if _max_pts > 0 else pred.reshape(-1).astype(float))
-            for name, pred in _predictions_windowed.items()
-        }
-
-        _fig = make_figure(_gt_power, _predictions_full, _app_name, _zoom_frac)
-        _n_models = len(_predictions_full)
-        _pts_note = f"{len(_gt_power):,} / {_total_pts:,} pts (max available)"
-        _caption = (
-            mo.md(f"{_n_models} model(s) — {_pts_note}")
-            if _n_models
-            else mo.md(f"No checkpoints found at `{_result_path}` — {_pts_note}")
-        )
-        if _n_models:
-            _svg_path = os.path.join(
-                _plots_dir,
-                f"{_dataset}_{_app_key}_{_sr}_{_ws}_seed{_seed}_grid.svg",
-            )
-            _fig.savefig(_svg_path, format="svg", bbox_inches="tight", facecolor="white")
-        _tabs[_app_key] = mo.vstack([fig_to_image(_fig), _caption])
-
-    mo.ui.tabs(_tabs)
-    return
-
-
-@app.cell
-def _(
-    NILMmetrics,
-    data_path_input,
-    dataset_dd,
-    load_btn,
-    load_predictions,
-    load_test_data,
-    max_pts_num,
-    mo,
-    os,
-    pd,
-    result_path_input,
-    seed_num,
-    sr_dd,
-    threshold_num,
-    window_size_num,
-    yaml,
-):
-    mo.stop(not load_btn.value, mo.md("Configure settings above and click **Load & Plot** to see metrics."))
-
-    with open(
-        os.path.join(os.path.dirname(__file__), "..", "configs", "datasets.yaml")
-    ) as _mf:
-        _metrics_cfg = yaml.safe_load(_mf)
-
-    _m_dataset = dataset_dd.value
-    _m_sr = sr_dd.value
-    _m_ws = int(window_size_num.value)
-    _m_seed = int(seed_num.value)
-    _m_data_path = data_path_input.value
-    _m_result_path = result_path_input.value
-    _m_max_pts = int(max_pts_num.value)
-    _m_threshold = float(threshold_num.value)
-    _nilm_metrics = NILMmetrics()
-
-    _rows = []
-    for _app_key, _app_cfg in _metrics_cfg[_m_dataset].items():
-        _app_name = _app_cfg["app"].strip()
-        try:
-            _data_test = load_test_data(_m_dataset, _app_cfg, _m_data_path, _m_sr, _m_ws, _m_seed)
-        except Exception:
-            continue
-        if _data_test is None or len(_data_test) == 0:
-            continue
-
-        _preds = load_predictions(_m_result_path, _m_dataset, _app_key, _m_sr, _m_ws, _m_seed)
-        _gt_full = _data_test[:, 1, 0, :].reshape(-1).astype(float)
-        _gt = _gt_full[:_m_max_pts] if _m_max_pts > 0 else _gt_full
-        _gt_state = (_gt > _m_threshold).astype(int)
-
-        for _model_name, _pred_win in _preds.items():
-            _pred_full = _pred_win.reshape(-1).astype(float)
-            _pred = _pred_full[:_m_max_pts] if _m_max_pts > 0 else _pred_full
-            _pred_state = (_pred > _m_threshold).astype(int)
-
-            _reg = _nilm_metrics(y=_gt, y_hat=_pred)
-            _cls = _nilm_metrics(y_state=_gt_state, y_hat_state=_pred_state)
-
-            _rows.append({
-                "Appliance": _app_name,
-                "Model": _model_name,
-                "MAE": _reg["MAE"],
-                "SAE": _reg["SAE"],
-                "F1": _cls["F1_SCORE"],
-            })
-
-    if _rows:
-        _metrics_df = pd.DataFrame(_rows).sort_values(["Appliance", "Model"])
-        mo.vstack([
-            mo.md(f"### Metrics (threshold = {_m_threshold} W)"),
-            mo.ui.table(_metrics_df, sortable=True, filterable=True),
-        ])
-    else:
-        mo.md("No predictions found — run models first.")
-    return
+    return (load_predictions,)
 
 
 @app.cell
 def _(mo):
-    save_btn = mo.ui.run_button(label="Save Fridge CSVs")
-    plot_csv_btn = mo.ui.run_button(label="Plot Fridge from CSV")
-    mo.vstack([
-        mo.md("### Fridge CSV Cache"),
-        mo.hstack([save_btn, plot_csv_btn]),
-    ])
-    return plot_csv_btn, save_btn
+    save_pred_btn = mo.ui.run_button(label="Save Predictions")
+    mo.vstack([mo.md("### Save Model Predictions to CSV"), save_pred_btn])
+    return (save_pred_btn,)
 
 
 @app.cell
 def _(
-    data_path_input,
     dataset_dd,
     load_predictions,
-    load_test_data,
     mo,
     os,
     pd,
     result_path_input,
-    save_btn,
+    save_pred_btn,
     seed_num,
     sr_dd,
     window_size_num,
     yaml,
 ):
-    mo.stop(not save_btn.value, mo.md("Click **Save Fridge CSVs** to cache fridge predictions."))
+    mo.stop(not save_pred_btn.value, mo.md("Click **Save Predictions** to cache model predictions."))
 
     with open(
         os.path.join(os.path.dirname(__file__), "..", "configs", "datasets.yaml")
-    ) as _f2:
-        _cfg2 = yaml.safe_load(_f2)
+    ) as _fp:
+        _pred_cfg = yaml.safe_load(_fp)
 
-    _dataset2 = dataset_dd.value
-    _sr2 = sr_dd.value
-    _ws2 = int(window_size_num.value)
-    _seed2 = int(seed_num.value)
-    _data_path2 = data_path_input.value
-    _result_path2 = result_path_input.value
+    _pr_ds = dataset_dd.value
+    _pr_sr = sr_dd.value
+    _pr_ws = int(window_size_num.value)
+    _pr_seed = int(seed_num.value)
+    _pr_result_path = result_path_input.value
 
-    _fridge_key = None
-    for _k, _v in _cfg2[_dataset2].items():
-        if any(word in _v["app"].lower() for word in ("fridge", "refrigerator")):
-            _fridge_key = _k
-            _fridge_app_name = _v["app"].strip()
-            _fridge_cfg = _v
-            break
+    _pred_root = os.path.join(os.path.dirname(__file__), "..", "predictions")
+    os.makedirs(_pred_root, exist_ok=True)
 
-    if _fridge_key is None:
-        _save_status = mo.md("**No fridge/refrigerator appliance found in config for selected dataset.**")
-    else:
-        _data_test2 = load_test_data(_dataset2, _fridge_cfg, _data_path2, _sr2, _ws2, _seed2)
-        _preds2 = load_predictions(_result_path2, _dataset2, _fridge_key, _sr2, _ws2, _seed2)
+    _pr_saved = []
+    for _pr_app_key in _pred_cfg[_pr_ds]:
+        _pr_preds = load_predictions(_pr_result_path, _pr_ds, _pr_app_key, _pr_sr, _pr_ws, _pr_seed)
+        if not _pr_preds:
+            continue
+        for _pr_model, _pr_arr in _pr_preds.items():
+            _pr_model_dir = os.path.join(
+                _pred_root, f"{_pr_ds}_{_pr_app_key}_{_pr_sr}_{_pr_ws}_seed{_pr_seed}", _pr_model
+            )
+            os.makedirs(_pr_model_dir, exist_ok=True)
+            for _pr_i in range(len(_pr_arr)):
+                pd.DataFrame({"prediction": _pr_arr[_pr_i].astype(float)}).to_csv(
+                    os.path.join(_pr_model_dir, f"{_pr_i}.csv"), index=False
+                )
+            _pr_saved.append(f"{_pr_ds}_{_pr_app_key}_{_pr_sr}_{_pr_ws}_seed{_pr_seed}/{_pr_model}/ ({len(_pr_arr)} samples)")
 
-        _agg2 = _data_test2[:, 0, 0, :].reshape(-1).astype(float)
-        _gt2 = _data_test2[:, 1, 0, :].reshape(-1).astype(float)
-
-        _plots_dir = os.path.join(os.path.dirname(__file__), "..", "plots")
-        os.makedirs(_plots_dir, exist_ok=True)
-
-        _saved = []
-        for _model, _pred_win in _preds2.items():
-            _pred2 = _pred_win.reshape(-1).astype(float)
-            _fname = f"{_dataset2}_{_fridge_key}_{_sr2}_{_ws2}_seed{_seed2}_{_model}.csv"
-            _fpath = os.path.join(_plots_dir, _fname)
-            pd.DataFrame({
-                "aggregate": _agg2,
-                "ground_truth": _gt2,
-                "prediction": _pred2,
-            }).to_csv(_fpath, index=False)
-            _saved.append(_fname)
-
-        if _saved:
-            _save_status = mo.md("**Saved:**\n" + "\n".join(f"- `plots/{f}`" for f in _saved))
-        else:
-            _save_status = mo.md("**No prediction checkpoints found.** Run model training first.")
-
-    _save_status
+    (
+        mo.md("**Saved:**\n" + "\n".join(f"- `predictions/{s}`" for s in _pr_saved))
+        if _pr_saved
+        else mo.md("**No predictions found.**")
+    )
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
+def _(dataset_dd, mo, os, seed_num, sr_dd, window_size_num):
+    _sv_ds = dataset_dd.value
+    _sv_sr = sr_dd.value
+    _sv_ws = int(window_size_num.value)
+    _sv_seed = int(seed_num.value)
+    _sv_prefix = f"{_sv_ds}_"
+    _sv_suffix = f"_{_sv_sr}_{_sv_ws}_seed{_sv_seed}"
+    _sv_csv_root = os.path.join(os.path.dirname(__file__), "..", "data_csv")
+    _sv_app_keys = []
+    if os.path.isdir(_sv_csv_root):
+        for _d in sorted(os.listdir(_sv_csv_root)):
+            if _d.startswith(_sv_prefix) and _d.endswith(_sv_suffix):
+                _sv_app_keys.append(_d[len(_sv_prefix):-len(_sv_suffix)])
+    appliance_dd = mo.ui.dropdown(
+        _sv_app_keys or ["(none)"], value=_sv_app_keys[0] if _sv_app_keys else "(none)",
+        label="Appliance",
+    )
+    appliance_dd
+    return (appliance_dd,)
+
+
+@app.cell(hide_code=True)
+def _(appliance_dd, dataset_dd, mo, os, seed_num, sr_dd, window_size_num):
+    _mv_ds = dataset_dd.value
+    _mv_sr = sr_dd.value
+    _mv_ws = int(window_size_num.value)
+    _mv_seed = int(seed_num.value)
+    _mv_app_dir = f"{_mv_ds}_{appliance_dd.value}_{_mv_sr}_{_mv_ws}_seed{_mv_seed}"
+    _mv_pred_root = os.path.join(os.path.dirname(__file__), "..", "predictions", _mv_app_dir)
+    _mv_models = sorted(os.listdir(_mv_pred_root)) if os.path.isdir(_mv_pred_root) else []
+    model_dd = mo.ui.dropdown(
+        _mv_models or ["(none)"], value=_mv_models[0] if _mv_models else "(none)",
+        label="Model",
+    )
+    model_dd
+    return (model_dd,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    get_idx, set_idx = mo.state(0)
+    return get_idx, set_idx
+
+
+@app.cell(hide_code=True)
 def _(
+    appliance_dd,
     dataset_dd,
-    glob,
-    io,
-    make_single_figure,
-    max_pts_num,
+    get_idx,
     mo,
+    os,
+    seed_num,
+    set_idx,
+    sr_dd,
+    window_size_num,
+):
+    _sl_ds = dataset_dd.value
+    _sl_sr = sr_dd.value
+    _sl_ws = int(window_size_num.value)
+    _sl_seed = int(seed_num.value)
+    _sl_app_dir = f"{_sl_ds}_{appliance_dd.value}_{_sl_sr}_{_sl_ws}_seed{_sl_seed}"
+    _sl_data_dir = os.path.join(os.path.dirname(__file__), "..", "data_csv", _sl_app_dir)
+    _sl_n = len([f for f in os.listdir(_sl_data_dir) if f.endswith(".csv")]) if os.path.isdir(_sl_data_dir) else 1
+    _sl_max = max(_sl_n - 1, 0)
+    prev_btn = mo.ui.button(label="◀", on_click=lambda _: set_idx(max(0, get_idx() - 1)))
+    next_btn = mo.ui.button(label="▶", on_click=lambda _: set_idx(min(_sl_max, get_idx() + 1)))
+    sample_slider = mo.ui.slider(0, _sl_max, value=get_idx(), on_change=set_idx, label="Sample")
+    idx_input = mo.ui.number(start=0, stop=_sl_max, value=get_idx(), on_change=lambda v: set_idx(int(v)), label="Index")
+    mo.hstack([prev_btn, sample_slider, next_btn, idx_input, mo.md(f"/ **{_sl_max}**")])
+    return
+
+
+@app.cell(hide_code=True)
+def _(
+    appliance_dd,
+    dataset_dd,
+    get_idx,
+    io,
+    mo,
+    model_dd,
     np,
     os,
     pd,
-    plot_csv_btn,
     plt,
     seed_num,
     sr_dd,
     window_size_num,
-    yaml,
-    zoom_frac_num,
 ):
-    mo.stop(not plot_csv_btn.value, mo.md("Click **Plot Fridge from CSV** to generate per-model plots from cached CSVs."))
+    _pl_ds = dataset_dd.value
+    _pl_sr = sr_dd.value
+    _pl_ws = int(window_size_num.value)
+    _pl_seed = int(seed_num.value)
+    _pl_app_dir = f"{_pl_ds}_{appliance_dd.value}_{_pl_sr}_{_pl_ws}_seed{_pl_seed}"
+    _pl_i = get_idx()
 
-    with open(
-        os.path.join(os.path.dirname(__file__), "..", "configs", "datasets.yaml")
-    ) as _f3:
-        _cfg3 = yaml.safe_load(_f3)
+    _pl_data_path = os.path.join(os.path.dirname(__file__), "..", "data_csv", _pl_app_dir, f"{_pl_i}.csv")
+    _pl_pred_path = os.path.join(os.path.dirname(__file__), "..", "predictions", _pl_app_dir, model_dd.value, f"{_pl_i}.csv")
 
-    _dataset3 = dataset_dd.value
-    _sr3 = sr_dd.value
-    _ws3 = int(window_size_num.value)
-    _seed3 = int(seed_num.value)
-    _zoom3 = float(zoom_frac_num.value)
-    _max_pts3 = int(max_pts_num.value)
-
-    _fridge_key3 = None
-    for _k3, _v3 in _cfg3[_dataset3].items():
-        if any(word in _v3["app"].lower() for word in ("fridge", "refrigerator")):
-            _fridge_key3 = _k3
-            _fridge_app_name3 = _v3["app"].strip()
-            break
-
-    _plots_dir3 = os.path.join(os.path.dirname(__file__), "..", "plots")
-    _pattern = os.path.join(
-        _plots_dir3,
-        f"{_dataset3}_{_fridge_key3}_{_sr3}_{_ws3}_seed{_seed3}_*.csv",
-    )
-    _csv_files = sorted(glob.glob(_pattern))
-
-    if not _csv_files:
-        _csv_output = mo.md(f"No CSVs found matching `plots/{_dataset3}_{_fridge_key3}_{_sr3}_{_ws3}_seed{_seed3}_*.csv`. Click **Save Fridge CSVs** first.")
+    if not os.path.isfile(_pl_data_path):
+        _pl_out = mo.md(f"Data CSV not found: `{_pl_data_path}`. Run **Save Data CSVs** first.")
+    elif not os.path.isfile(_pl_pred_path):
+        _pl_out = mo.md(f"Prediction CSV not found: `{_pl_pred_path}`. Run **Save Predictions** first.")
     else:
-        _tabs3 = {}
-        _combined_data3 = []
-        for _csv_path in _csv_files:
-            _stem = os.path.splitext(os.path.basename(_csv_path))[0]
-            _model_name3 = _stem.split(f"_seed{_seed3}_", 1)[-1]
-            _df = pd.read_csv(_csv_path)
-            _gt3 = _df["ground_truth"].to_numpy()
-            _pred3 = _df["prediction"].to_numpy()
-            if _max_pts3 > 0:
-                _gt3 = _gt3[:_max_pts3]
-                _pred3 = _pred3[:_max_pts3]
+        _pl_data = pd.read_csv(_pl_data_path)
+        _pl_pred = pd.read_csv(_pl_pred_path)
+        _pl_x = np.arange(_pl_ws)
 
-            _fig3 = make_single_figure(_gt3, _pred3, _model_name3, _fridge_app_name3, _zoom3)
-            _png_path = os.path.join(_plots_dir3, f"{_stem}.png")
-            _svg_path3 = os.path.join(_plots_dir3, f"{_stem}.svg")
-            _fig3.savefig(_svg_path3, format="svg", bbox_inches="tight", facecolor="white")
-            _buf3 = io.BytesIO()
-            _fig3.savefig(_buf3, format="png", dpi=150, bbox_inches="tight", facecolor="white")
-            plt.close(_fig3)
-            _img_bytes3 = _buf3.getvalue()
-            with open(_png_path, "wb") as _pf:
-                _pf.write(_img_bytes3)
-            _tabs3[_model_name3] = mo.image(src=_img_bytes3)
-            _combined_data3.append((_model_name3, _gt3, _pred3))
-
-        _n3 = len(_combined_data3)
-        _fig_c, _axes_c = plt.subplots(_n3, 1, figsize=(9.5, 2.8 * _n3), constrained_layout=True, facecolor="white")
-        if _n3 == 1:
-            _axes_c = [_axes_c]
-        for _ax_c, (_mname_c, _gt_c, _pred_c) in zip(_axes_c, _combined_data3):
-            _x_c = np.arange(len(_gt_c))
-            _ax_c.plot(_x_c, _pred_c, color="#ff7f0e", lw=0.9)
-            _ax_c.plot(_x_c, _gt_c, color="#2ca02c", lw=0.9)
-            _ax_c.set_xlim(0, len(_gt_c) - 1)
-            _ymax_c = max(float(np.percentile(_gt_c, 99.5)), float(np.percentile(_pred_c, 99.5)), 1.0)
-            _ax_c.set_ylim(0, _ymax_c * 1.05)
-            _ax_c.set_xticks([])
-            _ax_c.set_yticks([])
-            for _sp_c in _ax_c.spines.values():
-                _sp_c.set_visible(False)
-        _combined_png_path = os.path.join(_plots_dir3, f"{_dataset3}_{_fridge_key3}_{_sr3}_{_ws3}_seed{_seed3}_combined.png")
-        _fig_c.savefig(_combined_png_path, dpi=150, bbox_inches="tight", facecolor="white")
-        plt.close(_fig_c)
-
-        _csv_output = mo.ui.tabs(_tabs3)
-
-    _csv_output
+        _pl_fig, _pl_ax = plt.subplots(1, 1, figsize=(9.5, 3.0), constrained_layout=True, facecolor="white")
+        _pl_ax.plot(_pl_x, _pl_data["aggregate"].values, color="#1f77b4", lw=0.9, label="Aggregate")
+        _pl_ax.plot(_pl_x, _pl_data["ground_truth"].values, color="#2ca02c", lw=0.9, label="Ground-Truth")
+        _pl_ax.plot(_pl_x, _pl_pred["prediction"].values, color="#ff7f0e", lw=0.9, label="Prediction")
+        _pl_ax.set_xlim(0, _pl_ws - 1)
+        _pl_ax.set_xlabel("Timestep")
+        _pl_ax.set_ylabel("Power (W)")
+        _pl_ax.set_title(f"{appliance_dd.value} — {model_dd.value} — sample {_pl_i}", loc="left")
+        _pl_ax.legend(frameon=False, ncols=3)
+        _pl_buf = io.BytesIO()
+        _pl_fig.savefig(_pl_buf, format="png", dpi=130, bbox_inches="tight", facecolor="white")
+        plt.close(_pl_fig)
+        _pl_buf.seek(0)
+        _pl_out = mo.image(src=_pl_buf.read())
+    _pl_out
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(
+    appliance_dd,
     dataset_dd,
-    glob,
-    io,
+    go,
     mo,
+    model_dd,
     np,
     os,
     pd,
-    plot_csv_btn,
-    plt,
     seed_num,
     sr_dd,
     window_size_num,
-    yaml,
 ):
-    mo.stop(not plot_csv_btn.value, mo.md("Click **Plot Fridge from CSV** to generate the combined figure."))
+    _fs_ds = dataset_dd.value
+    _fs_sr = sr_dd.value
+    _fs_ws = int(window_size_num.value)
+    _fs_seed = int(seed_num.value)
+    _fs_app_dir = f"{_fs_ds}_{appliance_dd.value}_{_fs_sr}_{_fs_ws}_seed{_fs_seed}"
+    _fs_data_root = os.path.join(os.path.dirname(__file__), "..", "data_csv", _fs_app_dir)
+    _fs_pred_root = os.path.join(os.path.dirname(__file__), "..", "predictions", _fs_app_dir, model_dd.value)
 
-    _MODEL_ORDER = ["bert4nilm", "nilmformer", "bilstm", "cnn1d"]
+    mo.stop(not os.path.isdir(_fs_data_root), mo.md("No data CSVs found. Run **Save Data CSVs** first."))
+    mo.stop(not os.path.isdir(_fs_pred_root), mo.md("No prediction CSVs found. Run **Save Predictions** first."))
 
-    with open(
-        os.path.join(os.path.dirname(__file__), "..", "configs", "datasets.yaml")
-    ) as _f4:
-        _cfg4 = yaml.safe_load(_f4)
+    _fs_indices = sorted([int(f[:-4]) for f in os.listdir(_fs_data_root) if f.endswith(".csv")])
+    _fs_agg_list, _fs_gt_list, _fs_pred_list = [], [], []
+    for _fs_i in _fs_indices:
+        _df_d = pd.read_csv(os.path.join(_fs_data_root, f"{_fs_i}.csv"))
+        _fs_agg_list.append(_df_d["aggregate"].values)
+        _fs_gt_list.append(_df_d["ground_truth"].values)
+        _fp = os.path.join(_fs_pred_root, f"{_fs_i}.csv")
+        _fs_pred_list.append(pd.read_csv(_fp)["prediction"].values if os.path.isfile(_fp) else np.full(_fs_ws, np.nan))
 
-    _dataset4 = dataset_dd.value
-    _sr4 = sr_dd.value
-    _ws4 = int(window_size_num.value)
-    _seed4 = int(seed_num.value)
+    fs_agg_full = np.concatenate(_fs_agg_list)
+    fs_gt_full = np.concatenate(_fs_gt_list)
+    fs_pred_full = np.concatenate(_fs_pred_list)
+    _fs_total = len(fs_agg_full)
 
-    _fridge_key4 = None
-    for _k4, _v4 in _cfg4[_dataset4].items():
-        if any(word in _v4["app"].lower() for word in ("fridge", "refrigerator")):
-            _fridge_key4 = _k4
-            _fridge_app_name4 = _v4["app"].strip()
-            break
-
-    _plots_dir4 = os.path.join(os.path.dirname(__file__), "..", "plots")
-    _pattern4 = os.path.join(
-        _plots_dir4,
-        f"{_dataset4}_{_fridge_key4}_{_sr4}_{_ws4}_seed{_seed4}_*.csv",
+    _fs_step = max(1, _fs_total // 8000)
+    _fs_x_ov = np.arange(_fs_total)[::_fs_step]
+    _fs_fig_ov = go.Figure()
+    _fs_fig_ov.add_trace(go.Scatter(x=_fs_x_ov, y=fs_agg_full[::_fs_step], name="Aggregate", line=dict(color="#1f77b4", width=1), opacity=0.7))
+    _fs_fig_ov.add_trace(go.Scatter(x=_fs_x_ov, y=fs_gt_full[::_fs_step], name="Ground-Truth", line=dict(color="#2ca02c", width=1)))
+    _fs_fig_ov.add_trace(go.Scatter(x=_fs_x_ov, y=fs_pred_full[::_fs_step], name="Prediction", line=dict(color="#ff7f0e", width=1)))
+    _fs_fig_ov.update_layout(
+        title=dict(text=f"{appliance_dd.value} — {model_dd.value} — overview ({_fs_total} pts)", x=0, xanchor="left"),
+        xaxis_title="Timestep", yaxis_title="Power (W)",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        margin=dict(l=50, r=20, t=60, b=40),
+        hovermode="x unified", template="simple_white",
     )
-    _all_csvs4 = {
-        os.path.splitext(os.path.basename(p))[0].split(f"_seed{_seed4}_", 1)[-1].lower(): p
-        for p in glob.glob(_pattern4)
-    }
 
-    _matched = [(m, _all_csvs4[m]) for m in _MODEL_ORDER if m in _all_csvs4]
+    fs_zoom_sl = mo.ui.range_slider(0, _fs_total - 1, value=[0, min(_fs_total - 1, _fs_ws * 10)], step=1, label="Zoom window")
+    mo.vstack([mo.ui.plotly(_fs_fig_ov), fs_zoom_sl])
+    return fs_agg_full, fs_gt_full, fs_pred_full, fs_zoom_sl
 
-    if not _matched:
-        _combined_output = mo.md(f"No CSVs found for models {_MODEL_ORDER}. Click **Save Fridge CSVs** first.")
-    else:
-        _n = len(_matched)
-        _fig4, _axes4 = plt.subplots(_n, 1, figsize=(9.5, 2.8 * _n), constrained_layout=True, facecolor="white")
-        if _n == 1:
-            _axes4 = [_axes4]
 
-        _colors = {"gt": "#2ca02c", "pred": "#ff7f0e"}
-        _legend_added = False
-
-        for _ax4, (_mname4, _csv_path4) in zip(_axes4, _matched):
-            _df4 = pd.read_csv(_csv_path4)
-            _gt4 = _df4["ground_truth"].to_numpy()
-            _pred4 = _df4["prediction"].to_numpy()
-            _x4 = np.arange(len(_gt4))
-            _ax4.plot(_x4, _pred4, color=_colors["pred"], lw=0.9, label="Prediction")
-            _ax4.plot(_x4, _gt4, color=_colors["gt"], lw=0.9, label="Ground-Truth")
-            _ax4.set_xlim(0, len(_gt4) - 1)
-            _ax4.set_ylim(0, max(float(_gt4.max()), float(_pred4.max()), 1.0) * 1.15)
-            _ax4.set_ylabel("Power (W)")
-            _ax4.set_title(_mname4.upper(), loc="left")
-            for _sp in _ax4.spines.values():
-                _sp.set_linewidth(0.6)
-
-        _axes4[-1].set_xlabel("Sampling points")
-        _handles4, _labels4 = _axes4[0].get_legend_handles_labels()
-        _fig4.legend(_handles4, _labels4, loc="upper center", ncols=2, frameon=False, bbox_to_anchor=(0.5, 1.01))
-
-        _buf4 = io.BytesIO()
-        _fig4.savefig(_buf4, format="png", dpi=150, bbox_inches="tight", facecolor="white")
-        _combined_png = os.path.join(_plots_dir4, f"{_dataset4}_{_fridge_key4}_{_sr4}_{_ws4}_seed{_seed4}_combined.png")
-        with open(_combined_png, "wb") as _pf4:
-            _pf4.write(_buf4.getvalue())
-        plt.close(_fig4)
-        _combined_output = mo.image(src=_buf4.getvalue())
-
-    _combined_output
+@app.cell(hide_code=True)
+def _(
+    appliance_dd,
+    fs_agg_full,
+    fs_gt_full,
+    fs_pred_full,
+    fs_zoom_sl,
+    go,
+    mo,
+    model_dd,
+    np,
+):
+    _x0, _x1 = int(fs_zoom_sl.value[0]), int(fs_zoom_sl.value[1])
+    _det_agg = fs_agg_full[_x0:_x1 + 1]
+    _det_gt = fs_gt_full[_x0:_x1 + 1]
+    _det_pred = fs_pred_full[_x0:_x1 + 1]
+    _det_x = np.arange(_x0, _x1 + 1)
+    _det_step = max(1, len(_det_x) // 5000)
+    _det_fig = go.Figure()
+    _det_fig.add_trace(go.Scatter(x=_det_x[::_det_step], y=_det_agg[::_det_step], name="Aggregate", line=dict(color="#1f77b4", width=1), opacity=0.7))
+    _det_fig.add_trace(go.Scatter(x=_det_x[::_det_step], y=_det_gt[::_det_step], name="Ground-Truth", line=dict(color="#2ca02c", width=1)))
+    _det_fig.add_trace(go.Scatter(x=_det_x[::_det_step], y=_det_pred[::_det_step], name="Prediction", line=dict(color="#ff7f0e", width=1)))
+    _det_fig.update_layout(
+        title=dict(text=f"{appliance_dd.value} — {model_dd.value} — detail [{_x0}:{_x1}]", x=0, xanchor="left"),
+        xaxis_title="Timestep", yaxis_title="Power (W)",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        margin=dict(l=50, r=20, t=60, b=40),
+        hovermode="x unified", template="simple_white",
+    )
+    mo.ui.plotly(_det_fig)
     return
 
 
