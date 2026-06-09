@@ -9,6 +9,7 @@
 import os
 import numpy as np
 import pandas as pd
+import tables
 
 from sklearn.model_selection import train_test_split
 
@@ -1367,9 +1368,12 @@ class REDD_DataBuilder(object):
                     "min_activation_time": 12,
                 },
                 "WashingMachine": {
+                    # REDD "washer dryer" is a combined unit; the dryer element
+                    # peaks ~3-5kW, so max_threshold must be well above 2500W or
+                    # those steps read as off and no activation registers.
                     "min_threshold": 20,
-                    "max_threshold": 2500,
-                    "min_on_duration": 180,
+                    "max_threshold": 6000,
+                    "min_on_duration": 30,
                     "min_off_duration": 16,
                     "min_activation_time": 12,
                 },
@@ -1380,7 +1384,7 @@ class REDD_DataBuilder(object):
                 "Fridge": {"min_threshold": 50, "max_threshold": 300},
                 "Microwave": {"min_threshold": 200, "max_threshold": 3000},
                 "Dishwasher": {"min_threshold": 10, "max_threshold": 2500},
-                "WashingMachine": {"min_threshold": 20, "max_threshold": 2500},
+                "WashingMachine": {"min_threshold": 20, "max_threshold": 6000},
             }
 
     def get_house_data(self, house_indicies):
@@ -1550,6 +1554,33 @@ class REDD_DataBuilder(object):
 
         return tmp_status
 
+    def _read_meter_series(self, h5file, indice, meter):
+        """
+        Read a single meter's power series directly via PyTables.
+
+        Reading through ``tables`` (rather than ``pd.HDFStore``) is required because
+        pandas 3.0's HDFStore reader fails on this legacy NILMTK PyTables file
+        ('numpy.bytes_' object has no attribute 'get'); PyTables reads it in any
+        pandas version and handles the blosc decompression.
+
+        Return : pd.Series indexed by tz-aware (US/Eastern) DatetimeIndex
+        """
+        node = h5file.get_node(f"/building{indice}/elec/meter{meter}/table")
+        idx = node.col("index")  # int64 ns, UTC
+        vals = node.col("values_block_0")[:, 0]  # float32 power, shape (N, 1)
+        index = pd.to_datetime(idx, utc=True).tz_convert("US/Eastern")
+        return pd.Series(vals.astype(float), index=index).sort_index()
+
+    def _fill_long_gaps_with_zero(self, series, gap_threshold_steps=12):
+        """Fill NaN runs > 120s (12 x 10s steps) with 0.0 -- silence means appliance OFF."""
+        is_nan = series.isna()
+        nan_group = (is_nan != is_nan.shift()).cumsum()
+        nan_group_sizes = is_nan.groupby(nan_group).transform("sum")
+        long_gap_mask = is_nan & (nan_group_sizes > gap_threshold_steps)
+        series = series.copy()
+        series[long_gap_mask] = 0.0
+        return series
+
     def _get_dataframe(self, indice):
         """
         Load house data from redd.h5 and return one dataframe with aggregate and
@@ -1558,14 +1589,12 @@ class REDD_DataBuilder(object):
         Return : pd.core.frame.DataFrame instance
         """
         self._check_if_file_exist(self.data_path)
-        store = pd.HDFStore(self.data_path, "r")
+        h5file = tables.open_file(self.data_path, mode="r")
         try:
             # Build aggregate: sum of two mains phases, resampled to 10s
             agg_series = None
             for m in self.REDD_MAINS:
-                key = f"/building{indice}/elec/meter{m}"
-                df_m = store[key]
-                s = df_m.iloc[:, 0]
+                s = self._read_meter_series(h5file, indice, m)
                 s = s.resample("10s").mean().ffill(limit=6)
                 if agg_series is None:
                     agg_series = s
@@ -1600,14 +1629,19 @@ class REDD_DataBuilder(object):
                     meter_ids = house_map[appliance]
                     app_series = None
                     for m in meter_ids:
-                        key = f"/building{indice}/elec/meter{m}"
-                        df_m = store[key]
-                        s = df_m.iloc[:, 0]
+                        s = self._read_meter_series(h5file, indice, m)
                         s = s.resample("10s").mean()
                         if app_series is None:
                             app_series = s
                         else:
                             app_series = app_series.add(s, fill_value=0)
+
+                    # Long NaN gaps mean the appliance was off (silence -> 0);
+                    # short gaps are forward-filled. Without this, sparse REDD
+                    # submeters leave scattered NaNs that drop whole windows.
+                    app_series = self._fill_long_gaps_with_zero(app_series)
+                    app_series = app_series.ffill(limit=6)
+                    app_series[app_series < 5] = 0
 
                     appl_data = pd.DataFrame({appliance: app_series})
 
@@ -1651,7 +1685,7 @@ class REDD_DataBuilder(object):
                     house_data[appliance] = house_data[appliance].replace(-1, np.nan)
 
         finally:
-            store.close()
+            h5file.close()
 
         if self.sampling_rate != "10s":
             house_data = house_data.resample(self.sampling_rate).mean()

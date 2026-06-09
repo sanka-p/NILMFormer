@@ -57,6 +57,8 @@ REDD:
     ind_house_test: [1]
   WashingMachine:
     app: !!str WashingMachine
-    ind_house_train: [3, 4, 5, 6]
-    ind_house_valid: [2]
+    # Houses 2 & 5 have dead washer-dryer meters (flat ~8W); keep valid/test on
+    # houses with real activations (h1, h3, h4).
+    ind_house_train: [3, 5, 6]
+    ind_house_valid: [4]
     ind_house_test: [1]
