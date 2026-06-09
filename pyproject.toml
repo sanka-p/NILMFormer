@@ -17,6 +17,11 @@ dependencies = [
     "torch>=2.5.1",
     "xformers>=0.0.28.post3",
     "marimo>=0.10.0",
+    "polars>=1.41.2",
+    "kdepy>=1.1.12",
+    "lightning>=2.6.5",
+    "h5py>=3.16.0",
+    "tables>=3.10",
 ]
 
 [dependency-groups]

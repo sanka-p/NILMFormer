@@ -17,6 +17,7 @@ from src.helpers.utils import create_dir
 from src.helpers.preprocessing import (
     UKDALE_DataBuilder,
     REFIT_DataBuilder,
+    REDD_DataBuilder,
     split_train_test_nilmdataset,
     split_train_test_pdl_nilmdataset,
     nilmdataset_to_tser,
@@ -87,6 +88,34 @@ def launch_one_experiment(expes_config: OmegaConf):
             split_train_test_pdl_nilmdataset(
                 data_train, st_date_train, nb_house_test=1, seed=expes_config.seed
             )
+        )
+
+    elif expes_config.dataset == "REDD":
+        data_builder = REDD_DataBuilder(
+            data_path=f"{expes_config.data_path}/REDD/redd.h5",
+            mask_app=expes_config.app,
+            sampling_rate=expes_config.sampling_rate,
+            window_size=expes_config.window_size,
+        )
+
+        ind_house_train = list(expes_config.ind_house_train)
+        ind_house_valid = list(expes_config.ind_house_valid)
+        ind_house_test = list(expes_config.ind_house_test)
+        all_houses = sorted(set(ind_house_train + ind_house_valid + ind_house_test))
+
+        data, st_date = data_builder.get_nilm_dataset(house_indicies=all_houses)
+
+        if isinstance(expes_config.window_size, str):
+            expes_config.window_size = data_builder.window_size
+
+        data_train, st_date_train = data_builder.get_nilm_dataset(
+            house_indicies=ind_house_train
+        )
+        data_valid, st_date_valid = data_builder.get_nilm_dataset(
+            house_indicies=ind_house_valid
+        )
+        data_test, st_date_test = data_builder.get_nilm_dataset(
+            house_indicies=ind_house_test
         )
 
     logging.info("             ... Done.")
@@ -174,7 +203,7 @@ def main(dataset, sampling_rate, window_size, appliance, name_model, seed):
             datasets_config = datasets_config[dataset]
         else:
             raise ValueError(
-                "Dataset {} unknown. Only 'UKDALE' and 'REFIT' available.".format(
+                "Dataset {} unknown. Only 'UKDALE', 'REFIT', and 'REDD' available.".format(
                     dataset
                 )
             )
@@ -241,7 +270,7 @@ def main(dataset, sampling_rate, window_size, appliance, name_model, seed):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="NILMFormer Experiments.")
     parser.add_argument(
-        "--dataset", required=True, type=str, help="Dataset name (UKDALE or REFIT)."
+        "--dataset", required=True, type=str, help="Dataset name (UKDALE, REFIT, or REDD)."
     )
     parser.add_argument(
         "--sampling_rate",

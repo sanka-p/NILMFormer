@@ -1230,3 +1230,476 @@ class REFIT_DataBuilder(object):
         Fast check of NaN in a numpy array.
         """
         return np.isnan(np.sum(a))
+
+
+# ===================== REDD DataBuilder =====================#
+class REDD_DataBuilder(object):
+    # Mains meters (two phases) for all buildings
+    REDD_MAINS = [1, 2]
+
+    # Map: house_int -> canonical_appliance -> [meter_ints]
+    REDD_METER_MAP = {
+        1: {
+            "Fridge": [5],
+            "Dishwasher": [6],
+            "Microwave": [11],
+            "WashingMachine": [10, 20],
+        },
+        2: {
+            "Fridge": [9],
+            "Dishwasher": [10],
+            "Microwave": [6],
+            "WashingMachine": [7],
+        },
+        3: {
+            "Fridge": [7],
+            "Dishwasher": [9],
+            "Microwave": [16],
+            "WashingMachine": [13, 14],
+        },
+        4: {
+            "Dishwasher": [15],
+            "WashingMachine": [7],
+        },
+        5: {
+            "Fridge": [18],
+            "Dishwasher": [20],
+            "Microwave": [3],
+            "WashingMachine": [8, 9],
+        },
+        6: {
+            "Fridge": [8],
+            "Dishwasher": [9],
+            "WashingMachine": [4],
+        },
+    }
+
+    def __init__(
+        self,
+        data_path,
+        mask_app,
+        sampling_rate,
+        window_size,
+        window_stride=None,
+        use_status_from_kelly_paper=True,
+        soft_label=False,
+    ):
+        # =============== Class variables =============== #
+        self.data_path = data_path
+        self.mask_app = mask_app
+        self.sampling_rate = sampling_rate
+        self.soft_label = soft_label
+
+        if isinstance(self.mask_app, str):
+            self.mask_app = [self.mask_app]
+
+        if isinstance(window_size, str):
+            if window_size == "week":
+                self.flag_week = True
+                self.flag_day = False
+                if (self.sampling_rate == "1min") or (self.sampling_rate == "1T"):
+                    self.window_size = 10080
+                elif (self.sampling_rate == "10min") or (self.sampling_rate == "10T"):
+                    self.window_size = 1008
+                else:
+                    raise ValueError(
+                        f"Only sampling rate 1min and 10min supported for window size='week', got: {sampling_rate}"
+                    )
+            elif window_size == "day":
+                self.flag_week = False
+                self.flag_day = True
+                if self.sampling_rate == "30s":
+                    self.window_size = 2880
+                elif (self.sampling_rate == "1min") or (self.sampling_rate == "1T"):
+                    self.window_size = 1440
+                elif (self.sampling_rate == "10min") or (self.sampling_rate == "10T"):
+                    self.window_size = 144
+                else:
+                    raise ValueError(
+                        f"Only sampling rate 30s, 1min and 10min supported for window size='day', got: {sampling_rate}"
+                    )
+            else:
+                raise ValueError(
+                    f'Only window size = "day" or "week" for window period related (i.e. str type), got: {window_size}'
+                )
+        else:
+            self.flag_week = False
+            self.flag_day = False
+            self.window_size = window_size
+
+        if window_stride is not None:
+            self.window_stride = window_stride
+        else:
+            self.window_stride = self.window_size
+
+        # ======= Add aggregate to appliance(s) list ======= #
+        self._check_appliance_names()
+        self.mask_app = ["aggregate"] + self.mask_app
+
+        # ======= Dataset Parameters ======= #
+        self.cutoff = 6000
+
+        self.use_status_from_kelly_paper = use_status_from_kelly_paper
+
+        # All parameters are in Watts and adapted from Kelly et al. NeuralNILM paper
+        if self.use_status_from_kelly_paper:
+            # Threshold parameters are in Watts and time parameter in 10sec
+            self.appliance_param = {
+                "Fridge": {
+                    "min_threshold": 50,
+                    "max_threshold": 300,
+                    "min_on_duration": 6,
+                    "min_off_duration": 1,
+                    "min_activation_time": 1,
+                },
+                "Microwave": {
+                    "min_threshold": 200,
+                    "max_threshold": 3000,
+                    "min_on_duration": 1,
+                    "min_off_duration": 3,
+                    "min_activation_time": 1,
+                },
+                "Dishwasher": {
+                    "min_threshold": 10,
+                    "max_threshold": 2500,
+                    "min_on_duration": 180,
+                    "min_off_duration": 180,
+                    "min_activation_time": 12,
+                },
+                "WashingMachine": {
+                    "min_threshold": 20,
+                    "max_threshold": 2500,
+                    "min_on_duration": 180,
+                    "min_off_duration": 16,
+                    "min_activation_time": 12,
+                },
+            }
+        else:
+            # Threshold parameters are in Watts
+            self.appliance_param = {
+                "Fridge": {"min_threshold": 50, "max_threshold": 300},
+                "Microwave": {"min_threshold": 200, "max_threshold": 3000},
+                "Dishwasher": {"min_threshold": 10, "max_threshold": 2500},
+                "WashingMachine": {"min_threshold": 20, "max_threshold": 2500},
+            }
+
+    def get_house_data(self, house_indicies):
+        assert len(house_indicies) == 1, (
+            "get_house_data() implemented to get data from 1 house only at a time."
+        )
+
+        return self._get_dataframe(house_indicies[0])
+
+    def get_classif_dataset(self, house_indicies):
+        """
+        Process data to build classif dataset
+
+        Return :
+            -Time Series: np.ndarray of size [N_ts, Win_Size]
+            -Associated label for each subsequences: np.ndarray of size [N_ts, 1] in 0 or 1 for each TS
+            -st_date: pandas.Dataframe as :
+                - index: id of each house
+                - column 'start_date': Starting timestamp of each TS
+        """
+
+        nilm_dataset, st_date = self.get_nilm_dataset(house_indicies)
+        y = np.zeros(len(nilm_dataset))
+
+        for idx in range(len(nilm_dataset)):
+            if (nilm_dataset[idx, 1, 1, :] > 0).any():
+                y[idx] = 1
+
+        return nilm_dataset[:, 0, 0, :], y, st_date
+
+    def get_nilm_dataset(self, house_indicies):
+        """
+        Process data to build NILM usecase
+
+        Return :
+            - np.ndarray of size [N_ts, M_appliances, 2, Win_Size] as :
+
+                -1st dimension : nb ts obtained after slicing the total load curve of chosen Houses
+                -2nd dimension : nb chosen appliances
+                                -> indice 0 for aggregate load curve
+                                -> Other appliance in same order as given "appliance_names" list
+                -3rd dimension : access to load curve (values of consumption in Wh) or states of activation
+                                of the appliance (0 or 1 for each time step)
+                                -> indice 0 : access to load curve
+                                -> indice 1 : access to states of activation (0 or 1 for each time step) or Probability (i.e. value in [0, 1]) if soft_label
+                -4th dimension : values
+
+            - pandas.Dataframe as :
+                index: id of each house
+                column 'start_date': Starting timestamp of each TS
+        """
+
+        output_data = np.array([])
+        st_date = pd.DataFrame()
+
+        for indice in house_indicies:
+            tmp_list_st_date = []
+
+            data = self._get_dataframe(indice)
+            stems, st_date_stems = self._get_stems(data)
+
+            if self.window_size == self.window_stride:
+                n_wins = len(data) // self.window_stride
+            else:
+                n_wins = 1 + ((len(data) - self.window_size) // self.window_stride)
+
+            X = np.empty(
+                (len(house_indicies) * n_wins, len(self.mask_app), 2, self.window_size)
+            )
+
+            cpt = 0
+            for i in range(n_wins):
+                tmp = stems[
+                    :,
+                    i * self.window_stride : i * self.window_stride + self.window_size,
+                ]
+
+                if not self._check_anynan(
+                    tmp
+                ):  # Check if nan -> skip the subsequences if it's the case
+                    tmp_list_st_date.append(st_date_stems[i * self.window_stride])
+
+                    X[cpt, 0, 0, :] = tmp[0, :]
+                    X[cpt, 0, 1, :] = (tmp[0, :] > 0).astype(dtype=int)
+
+                    key = 1
+                    for j in range(1, len(self.mask_app)):
+                        X[cpt, j, 0, :] = tmp[key, :]
+                        X[cpt, j, 1, :] = tmp[key + 1, :]
+                        key += 2
+
+                    cpt += 1  # Add one subsequence
+
+            tmp_st_date = pd.DataFrame(
+                data=tmp_list_st_date,
+                index=[indice for j in range(cpt)],
+                columns=["start_date"],
+            )
+            output_data = (
+                np.concatenate((output_data, X[:cpt, :, :, :]), axis=0)
+                if output_data.size
+                else X[:cpt, :, :, :]
+            )
+            st_date = (
+                pd.concat([st_date, tmp_st_date], axis=0)
+                if st_date.size
+                else tmp_st_date
+            )
+
+        return output_data, st_date
+
+    def _get_stems(self, dataframe):
+        """
+        Extract load curve for each chosen appliances.
+
+        Return : np.ndarray instance
+        """
+        stems = np.empty((1 + (len(self.mask_app) - 1) * 2, dataframe.shape[0]))
+        stems[0, :] = dataframe["aggregate"].values
+
+        key = 1
+        for appliance in self.mask_app[1:]:
+            stems[key, :] = dataframe[appliance].values
+            stems[key + 1, :] = dataframe[appliance + "_status"].values
+            key += 2
+
+        return stems, list(dataframe.index)
+
+    def _compute_status(self, initial_status, min_on, min_off, min_activation_time):
+        tmp_status = np.zeros_like(initial_status)
+        status_diff = np.diff(initial_status)
+        events_idx = status_diff.nonzero()
+
+        events_idx = np.array(events_idx).squeeze()
+        events_idx += 1
+
+        if initial_status[0]:
+            events_idx = np.insert(events_idx, 0, 0)
+
+        if initial_status[-1]:
+            events_idx = np.insert(events_idx, events_idx.size, initial_status.size)
+
+        events_idx = events_idx.reshape((-1, 2))
+        on_events = events_idx[:, 0].copy()
+        off_events = events_idx[:, 1].copy()
+        assert len(on_events) == len(off_events)
+
+        if len(on_events) > 0:
+            off_duration = on_events[1:] - off_events[:-1]
+            off_duration = np.insert(off_duration, 0, 1000)
+            on_events = on_events[off_duration > min_off]
+            off_events = off_events[np.roll(off_duration, -1) > min_off]
+
+            on_duration = off_events - on_events
+            on_events = on_events[on_duration >= min_on]
+            off_events = off_events[on_duration >= min_on]
+            assert len(on_events) == len(off_events)
+
+        # Filter activations based on minimum continuous points after applying min_on and min_off
+        activation_durations = off_events - on_events
+        valid_activations = activation_durations >= min_activation_time
+        on_events = on_events[valid_activations]
+        off_events = off_events[valid_activations]
+
+        for on, off in zip(on_events, off_events):
+            tmp_status[on:off] = 1
+
+        return tmp_status
+
+    def _get_dataframe(self, indice):
+        """
+        Load house data from redd.h5 and return one dataframe with aggregate and
+        appliance resampled at chosen time step.
+
+        Return : pd.core.frame.DataFrame instance
+        """
+        self._check_if_file_exist(self.data_path)
+        store = pd.HDFStore(self.data_path, "r")
+        try:
+            # Build aggregate: sum of two mains phases, resampled to 10s
+            agg_series = None
+            for m in self.REDD_MAINS:
+                key = f"/building{indice}/elec/meter{m}"
+                df_m = store[key]
+                s = df_m.iloc[:, 0]
+                s = s.resample("10s").mean().ffill(limit=6)
+                if agg_series is None:
+                    agg_series = s
+                else:
+                    agg_series = agg_series.add(s, fill_value=0)
+
+            house_data = pd.DataFrame({"aggregate": agg_series})
+            house_data[house_data < 5] = 0
+            house_data = house_data.clip(lower=0, upper=self.cutoff)
+            house_data = house_data.sort_index()
+
+            if self.flag_week:
+                tmp_min = house_data[
+                    (house_data.index.weekday == 1)
+                    & (house_data.index.hour == 0)
+                    & (house_data.index.minute == 0)
+                    & (house_data.index.second == 0)
+                ]
+                house_data = house_data[house_data.index >= tmp_min.index[0]]
+            elif self.flag_day:
+                tmp_min = house_data[
+                    (house_data.index.hour == 0)
+                    & (house_data.index.minute == 0)
+                    & (house_data.index.second == 0)
+                ]
+                house_data = house_data[house_data.index >= tmp_min.index[0]]
+
+            for appliance in self.mask_app[1:]:
+                # Check if appliance is available in this house
+                house_map = self.REDD_METER_MAP.get(indice, {})
+                if appliance in house_map:
+                    meter_ids = house_map[appliance]
+                    app_series = None
+                    for m in meter_ids:
+                        key = f"/building{indice}/elec/meter{m}"
+                        df_m = store[key]
+                        s = df_m.iloc[:, 0]
+                        s = s.resample("10s").mean()
+                        if app_series is None:
+                            app_series = s
+                        else:
+                            app_series = app_series.add(s, fill_value=0)
+
+                    appl_data = pd.DataFrame({appliance: app_series})
+
+                    # Merge on index (inner join to align timestamps)
+                    house_data = pd.merge(
+                        house_data, appl_data, how="inner", left_index=True, right_index=True
+                    )
+                    house_data = house_data.clip(lower=0, upper=self.cutoff)
+                    house_data = house_data.sort_index()
+
+                    # Replace nan values by -1 during appliance activation status filtering
+                    house_data[appliance] = house_data[appliance].replace(np.nan, -1)
+
+                    # Creating status
+                    initial_status = (
+                        (
+                            (
+                                house_data[appliance]
+                                >= self.appliance_param[appliance]["min_threshold"]
+                            )
+                            & (
+                                house_data[appliance]
+                                <= self.appliance_param[appliance]["max_threshold"]
+                            )
+                        )
+                        .astype(int)
+                        .values
+                    )
+
+                    if self.use_status_from_kelly_paper:
+                        house_data[appliance + "_status"] = self._compute_status(
+                            initial_status,
+                            self.appliance_param[appliance]["min_on_duration"],
+                            self.appliance_param[appliance]["min_off_duration"],
+                            self.appliance_param[appliance]["min_activation_time"],
+                        )
+                    else:
+                        house_data[appliance + "_status"] = initial_status
+
+                    # Finally replacing nan values put to -1 by nan
+                    house_data[appliance] = house_data[appliance].replace(-1, np.nan)
+
+        finally:
+            store.close()
+
+        if self.sampling_rate != "10s":
+            house_data = house_data.resample(self.sampling_rate).mean()
+
+        tmp_list = ["aggregate"]
+        for appliance in self.mask_app[1:]:
+            tmp_list.append(appliance)
+            tmp_list.append(appliance + "_status")
+            if appliance in house_data:
+                if not self.soft_label:
+                    house_data[appliance + "_status"] = (
+                        house_data[appliance + "_status"] > 0
+                    ).astype(int)
+                else:
+                    continue
+            else:
+                house_data[appliance] = 0
+                house_data[appliance + "_status"] = 0
+
+        house_data = house_data[tmp_list]
+
+        return house_data
+
+    def _check_appliance_names(self):
+        """
+        Check appliances names for REDD case.
+        """
+        for appliance in self.mask_app:
+            assert appliance in [
+                "Fridge",
+                "Dishwasher",
+                "Microwave",
+                "WashingMachine",
+            ], f"Selected appliance unknown for REDD Dataset, got: {appliance}"
+        return
+
+    def _check_if_file_exist(self, file):
+        """
+        Check if file exist at provided path.
+        """
+        if os.path.isfile(file):
+            pass
+        else:
+            raise FileNotFoundError
+        return
+
+    def _check_anynan(self, a):
+        """
+        Fast check of NaN in a numpy array.
+        """
+        return np.isnan(np.sum(a))
