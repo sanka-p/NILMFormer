@@ -181,8 +181,8 @@ NILMFormer:
 
 TCN_KL:
   model_kwargs:
-    weights_path: "/home/sanka/projects/nilm/NILM_DeepL-TCN/TCNpandula/tcn_ukdale.ckpt"
-    meta_path: "/home/sanka/projects/nilm/NILM_DeepL-TCN/TCNpandula/tcn_meta.json"
+    weights_path: "/new-home/e19/e19275/NILM/ukdale_tcn_train/TCNpandula/logs/lightning_logs/version_1/checkpoints/epoch=9999-step=200000.ckpt"
+    meta_path: "/new-home/e19/e19275/NILM/ukdale_tcn_train/TCNpandula/tcn_meta.json"    
     appliance_name_map:
       Kettle: kettle
       kettle: kettle
