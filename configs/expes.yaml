@@ -9,6 +9,7 @@ list_exo_variables:
   - hour
   - dow
   - month
+synth_aggregate_apps: null
 power_scaling_type: !!str MaxScaling
 appliance_scaling_type: !!str SameAsPower
 batch_size: !!int 64

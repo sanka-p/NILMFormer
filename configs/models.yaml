@@ -1,4 +1,10 @@
 BiGRU:
+  synth_aggregate_apps:
+    - fridge
+    - washing_machine
+    - kettle
+    - dishwasher
+    - microwave
   model_kwargs:
     out_channels: 1
     dropout: 0.1
@@ -10,6 +16,12 @@ BiGRU:
     training_in_model: false
 
 BiLSTM:
+  synth_aggregate_apps:
+    - fridge
+    - washing_machine
+    - kettle
+    - dishwasher
+    - microwave
   model_kwargs:
     downstreamtask : "seq2seq"
   model_training_param:
@@ -18,6 +30,12 @@ BiLSTM:
     training_in_model: false
 
 CNN1D:
+  synth_aggregate_apps:
+    - fridge
+    - washing_machine
+    - kettle
+    - dishwasher
+    - microwave
   model_kwargs:
     quantiles:
       - 0.5
@@ -32,6 +50,12 @@ CNN1D:
     training_in_model: false
 
 UNET_NILM:
+  synth_aggregate_apps:
+    - fridge
+    - washing_machine
+    - kettle
+    - dishwasher
+    - microwave
   model_kwargs:
     num_layers: 4
     features_start: 8
@@ -48,6 +72,12 @@ UNET_NILM:
     training_in_model: false
 
 FCN:
+  synth_aggregate_apps:
+    - fridge
+    - washing_machine
+    - kettle
+    - dishwasher
+    - microwave
   model_kwargs:
     downstreamtask: "seq2seq"
   model_training_param:
@@ -56,6 +86,12 @@ FCN:
     training_in_model: false
 
 DResNet:
+  synth_aggregate_apps:
+    - fridge
+    - washing_machine
+    - kettle
+    - dishwasher
+    - microwave
   model_kwargs:
     kernel_size: 3
   model_training_param:
@@ -64,6 +100,12 @@ DResNet:
     training_in_model: false
 
 DAResNet:
+  synth_aggregate_apps:
+    - fridge
+    - washing_machine
+    - kettle
+    - dishwasher
+    - microwave
   model_kwargs:
     kernel_size: 3
   model_training_param:
@@ -72,6 +114,12 @@ DAResNet:
     training_in_model: false
 
 BERT4NILM:
+  synth_aggregate_apps:
+    - fridge
+    - washing_machine
+    - kettle
+    - dishwasher
+    - microwave
   model_kwargs:
     c_out: 1
     dp_rate: 0.1
@@ -87,6 +135,12 @@ BERT4NILM:
     training_in_model: false
 
 DiffNILM:
+  synth_aggregate_apps:
+    - fridge
+    - washing_machine
+    - kettle
+    - dishwasher
+    - microwave
   model_kwargs: {}
   model_training_param:
     lr: !!float 1e-3
@@ -94,6 +148,12 @@ DiffNILM:
     training_in_model: true
 
 STNILM:
+  synth_aggregate_apps:
+    - fridge
+    - washing_machine
+    - kettle
+    - dishwasher
+    - microwave
   model_kwargs:
     c_out: 1
     n_experts: 10
@@ -105,6 +165,12 @@ STNILM:
     training_in_model: true
 
 TSILNet:
+  synth_aggregate_apps:
+    - fridge
+    - washing_machine
+    - kettle
+    - dishwasher
+    - microwave
   model_kwargs:
     downstreamtask: "seq2seq"
     tcn_channels: [4, 16, 64]
@@ -121,6 +187,12 @@ TSILNet:
     training_in_model: false
 
 Energformer:
+  synth_aggregate_apps:
+    - fridge
+    - washing_machine
+    - kettle
+    - dishwasher
+    - microwave
   model_kwargs:
     c_out: 1
     kernel_embed_size: 3
@@ -136,12 +208,24 @@ Energformer:
     training_in_model: false
 
 ConvNet:
+  synth_aggregate_apps:
+    - fridge
+    - washing_machine
+    - kettle
+    - dishwasher
+    - microwave
   model_kwargs: {}
   model_training_param:
     lr: !!float 1e-3
     wd: !!float 0
 
 ResNet:
+  synth_aggregate_apps:
+    - fridge
+    - washing_machine
+    - kettle
+    - dishwasher
+    - microwave
   model_kwargs:
     mid_channels: 64
   model_training_param:
@@ -149,6 +233,12 @@ ResNet:
     wd: !!float 0
 
 Inception:
+  synth_aggregate_apps:
+    - fridge
+    - washing_machine
+    - kettle
+    - dishwasher
+    - microwave
   model_kwargs:
     n_filters: 32
     n_blocks: 2
@@ -159,6 +249,12 @@ Inception:
     wd: !!float 0
 
 NILMFormer:
+  synth_aggregate_apps:
+    - fridge
+    - washing_machine
+    - kettle
+    - dishwasher
+    - microwave
   model_kwargs:
     c_out: 1
 
@@ -180,6 +276,12 @@ NILMFormer:
     training_in_model: false
 
 TCN_KL:
+  synth_aggregate_apps:
+    - fridge
+    - washing_machine
+    - kettle
+    - dishwasher
+    - microwave
   model_kwargs:
     weights_path: "/home/sanka/projects/nilm/NILM_DeepL-TCN/TCNpandula/tcn_ukdale.ckpt"
     meta_path: "/home/sanka/projects/nilm/NILM_DeepL-TCN/TCNpandula/tcn_meta.json"
