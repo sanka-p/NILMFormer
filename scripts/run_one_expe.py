@@ -26,9 +26,6 @@ from src.helpers.dataset import NILMscaler
 from src.helpers.expes import launch_models_training
 
 
-_UKDALE_ALL_APPS = ["fridge", "washing_machine", "kettle", "dishwasher", "microwave"]
-
-
 def launch_one_experiment(expes_config: OmegaConf):
     np.random.seed(seed=expes_config.seed)
 
@@ -39,7 +36,7 @@ def launch_one_experiment(expes_config: OmegaConf):
             mask_app=expes_config.app,
             sampling_rate=expes_config.sampling_rate,
             window_size=expes_config.window_size,
-            synth_aggregate_apps=_UKDALE_ALL_APPS if expes_config.name_model == "TCN_KL" else None,
+            synth_aggregate_apps=expes_config.synth_aggregate_apps,
         )
 
         data, st_date = data_builder.get_nilm_dataset(house_indicies=[1, 2, 3, 4, 5])
@@ -69,6 +66,7 @@ def launch_one_experiment(expes_config: OmegaConf):
             mask_app=expes_config.app,
             sampling_rate=expes_config.sampling_rate,
             window_size=expes_config.window_size,
+            synth_aggregate_apps=expes_config.synth_aggregate_apps,
         )
 
         data, st_date = data_builder.get_nilm_dataset(
@@ -96,6 +94,7 @@ def launch_one_experiment(expes_config: OmegaConf):
             mask_app=expes_config.app,
             sampling_rate=expes_config.sampling_rate,
             window_size=expes_config.window_size,
+            synth_aggregate_apps=expes_config.synth_aggregate_apps,
         )
 
         ind_house_train = list(expes_config.ind_house_train)
@@ -220,6 +219,11 @@ def main(dataset, sampling_rate, window_size, appliance, name_model, seed):
                     name_model, list(baselines_config.keys())
                 )
             )
+
+    # Merge dataset-level keys (non-appliance entries) — overrides model-level config.
+    # Needed so REFIT/REDD supply their own synth_aggregate_apps names.
+    dataset_level = {k: v for k, v in datasets_config.items() if not isinstance(v, dict)}
+    expes_config.update(dataset_level)
 
     # Selected appliance check
     if appliance in datasets_config:

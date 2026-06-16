@@ -1,4 +1,9 @@
 REFIT:
+  synth_aggregate_apps:
+    - WashingMachine
+    - Dishwasher
+    - Kettle
+    - Microwave
   Dishwasher:
     app: !!str Dishwasher
     house_with_app_i: [1, 2, 3, 5, 6, 7, 9, 10, 13, 15, 16, 18, 20]
@@ -40,6 +45,11 @@ UKDALE:
     ind_house_test: [2]
 
 REDD:
+  synth_aggregate_apps:
+    - Fridge
+    - Dishwasher
+    - Microwave
+    - WashingMachine
   Fridge:
     app: !!str Fridge
     ind_house_train: [3, 5, 6]

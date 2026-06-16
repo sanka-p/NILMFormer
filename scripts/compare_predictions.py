@@ -507,5 +507,110 @@ def _(
     return
 
 
+@app.cell(hide_code=True)
+def _(mo, os):
+    _viz_csv_root = os.path.join(os.path.dirname(__file__), "..", "data_csv")
+    _viz_pred_root = os.path.join(os.path.dirname(__file__), "..", "predictions")
+
+    _viz_app_dirs = sorted(os.listdir(_viz_csv_root)) if os.path.isdir(_viz_csv_root) else []
+
+    viz_dataset_dd = mo.ui.dropdown(
+        _viz_app_dirs or ["(none)"],
+        value=_viz_app_dirs[0] if _viz_app_dirs else "(none)",
+        label="Dataset/Appliance/SR/Window/Seed",
+    )
+    viz_seed_num = mo.ui.number(value=0, label="Seed")
+    viz_sr_dd = mo.ui.dropdown(["10s", "1min", "10min", "30min"], value="10s", label="Sampling rate")
+    viz_ws_num = mo.ui.number(value=256, label="Window size")
+    viz_start_num = mo.ui.number(value=0, label="Start sample point")
+    viz_end_num = mo.ui.number(value=256, label="End sample point")
+
+    mo.vstack([
+        viz_dataset_dd,
+        mo.hstack([viz_seed_num, viz_sr_dd, viz_ws_num, viz_start_num, viz_end_num]),
+    ])
+    return viz_dataset_dd, viz_end_num, viz_start_num, viz_ws_num
+
+
+@app.cell(hide_code=True)
+def _(mo, os, viz_dataset_dd):
+    _viz_pred_root = os.path.join(os.path.dirname(__file__), "..", "predictions", viz_dataset_dd.value)
+    _viz_models = sorted(os.listdir(_viz_pred_root)) if os.path.isdir(_viz_pred_root) else []
+
+    viz_model_dd = mo.ui.dropdown(
+        _viz_models or ["(none)"],
+        value=_viz_models[0] if _viz_models else "(none)",
+        label="Model",
+    )
+    viz_model_dd
+    return (viz_model_dd,)
+
+
+@app.cell(hide_code=True)
+def _(mo, np, os, pd, viz_dataset_dd, viz_model_dd, viz_ws_num):
+    _vz_data_root = os.path.join(os.path.dirname(__file__), "..", "data_csv", viz_dataset_dd.value)
+    _vz_pred_root = os.path.join(os.path.dirname(__file__), "..", "predictions", viz_dataset_dd.value, viz_model_dd.value)
+
+    mo.stop(not os.path.isdir(_vz_data_root), mo.md("No data CSVs found. Run **Save Data CSVs** first."))
+    mo.stop(not os.path.isdir(_vz_pred_root), mo.md("No prediction CSVs found. Run **Save Predictions** first."))
+
+    _vz_ws = int(viz_ws_num.value)
+    _vz_indices = sorted([int(f[:-4]) for f in os.listdir(_vz_data_root) if f.endswith(".csv")])
+
+    _vz_agg, _vz_gt, _vz_pred = [], [], []
+    for _vz_i in _vz_indices:
+        _vz_df = pd.read_csv(os.path.join(_vz_data_root, f"{_vz_i}.csv"))
+        _vz_agg.append(_vz_df["aggregate"].values)
+        _vz_gt.append(_vz_df["ground_truth"].values)
+        _vz_pf = os.path.join(_vz_pred_root, f"{_vz_i}.csv")
+        _vz_pred.append(pd.read_csv(_vz_pf)["prediction"].values if os.path.isfile(_vz_pf) else np.full(_vz_ws, np.nan))
+
+    viz_agg_full = np.concatenate(_vz_agg)
+    viz_gt_full = np.concatenate(_vz_gt)
+    viz_pred_full = np.concatenate(_vz_pred)
+    return viz_agg_full, viz_gt_full, viz_pred_full
+
+
+@app.cell(hide_code=True)
+def _(
+    io,
+    mo,
+    np,
+    plt,
+    viz_agg_full,
+    viz_end_num,
+    viz_gt_full,
+    viz_pred_full,
+    viz_start_num,
+):
+    _vp_start = int(viz_start_num.value)
+    _vp_end = int(viz_end_num.value)
+
+    _vp_agg = viz_agg_full[_vp_start:_vp_end]
+    _vp_gt = viz_gt_full[_vp_start:_vp_end]
+    _vp_pred = viz_pred_full[_vp_start:_vp_end]
+    _vp_x = np.arange(len(_vp_agg))
+
+    _vp_fig, _vp_ax = plt.subplots(1, 1, figsize=(9.5, 3.0), constrained_layout=True)
+    _vp_ax.plot(_vp_x, _vp_agg, color="#1f77b4", lw=0.9)
+    _vp_ax.plot(_vp_x, _vp_gt, color="#2ca02c", lw=0.9)
+    _vp_ax.plot(_vp_x, _vp_pred, color="#ff7f0e", lw=0.9)
+    _vp_ax.set_xlim(0, len(_vp_x) - 1)
+    _vp_ax.set_xlabel("")
+    _vp_ax.set_ylabel("")
+
+    viz_buf = io.BytesIO()
+    _vp_fig.savefig(viz_buf, format="png", dpi=130, bbox_inches="tight", transparent=True)
+    plt.close(_vp_fig)
+    viz_buf.seek(0)
+    viz_png_bytes = viz_buf.getvalue()
+
+    mo.vstack([
+        mo.image(src=viz_png_bytes),
+        mo.download(data=viz_png_bytes, filename="prediction_plot.png", label="Download PNG"),
+    ])
+    return
+
+
 if __name__ == "__main__":
     app.run()

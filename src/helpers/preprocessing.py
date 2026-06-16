@@ -838,12 +838,14 @@ class REFIT_DataBuilder(object):
         window_stride=None,
         use_status_from_kelly_paper=False,
         soft_label=False,
+        synth_aggregate_apps=None,
     ):
         # =============== Class variables =============== #
         self.data_path = data_path
         self.mask_app = mask_app
         self.sampling_rate = sampling_rate
         self.soft_label = soft_label
+        self.synth_aggregate_apps = synth_aggregate_apps
 
         if isinstance(self.mask_app, str):
             self.mask_app = [self.mask_app]
@@ -1054,7 +1056,11 @@ class REFIT_DataBuilder(object):
         Return : np.ndarray instance
         """
         stems = np.empty((1 + (len(self.mask_app) - 1) * 2, dataframe.shape[0]))
-        stems[0, :] = dataframe["Aggregate"].values
+        stems[0, :] = (
+            dataframe["synth_aggregate"].values
+            if "synth_aggregate" in dataframe.columns
+            else dataframe["Aggregate"].values
+        )
 
         key = 1
         for appliance in self.mask_app[1:]:
@@ -1184,7 +1190,17 @@ class REFIT_DataBuilder(object):
         if self.sampling_rate != "10s":
             house_data = house_data.resample(self.sampling_rate).mean()
 
+        if self.synth_aggregate_apps is not None:
+            house_data["synth_aggregate"] = sum(
+                house_data[app].fillna(0.0)
+                if app in house_data.columns
+                else pd.Series(0.0, index=house_data.index)
+                for app in self.synth_aggregate_apps
+            )
+
         tmp_list = ["Aggregate"]
+        if "synth_aggregate" in house_data.columns:
+            tmp_list.append("synth_aggregate")
         for appliance in self.mask_app[1:]:
             tmp_list.append(appliance)
             tmp_list.append(appliance + "_status")
@@ -1284,12 +1300,14 @@ class REDD_DataBuilder(object):
         window_stride=None,
         use_status_from_kelly_paper=True,
         soft_label=False,
+        synth_aggregate_apps=None,
     ):
         # =============== Class variables =============== #
         self.data_path = data_path
         self.mask_app = mask_app
         self.sampling_rate = sampling_rate
         self.soft_label = soft_label
+        self.synth_aggregate_apps = synth_aggregate_apps
 
         if isinstance(self.mask_app, str):
             self.mask_app = [self.mask_app]
@@ -1503,7 +1521,11 @@ class REDD_DataBuilder(object):
         Return : np.ndarray instance
         """
         stems = np.empty((1 + (len(self.mask_app) - 1) * 2, dataframe.shape[0]))
-        stems[0, :] = dataframe["aggregate"].values
+        stems[0, :] = (
+            dataframe["synth_aggregate"].values
+            if "synth_aggregate" in dataframe.columns
+            else dataframe["aggregate"].values
+        )
 
         key = 1
         for appliance in self.mask_app[1:]:
@@ -1684,13 +1706,51 @@ class REDD_DataBuilder(object):
                     # Finally replacing nan values put to -1 by nan
                     house_data[appliance] = house_data[appliance].replace(-1, np.nan)
 
+            if self.synth_aggregate_apps is not None:
+                already_loaded = set(self.mask_app[1:])
+                for appliance in self.synth_aggregate_apps:
+                    if appliance in already_loaded:
+                        continue
+                    house_map = self.REDD_METER_MAP.get(indice, {})
+                    if appliance not in house_map:
+                        house_data[appliance] = 0.0
+                        continue
+                    meter_ids = house_map[appliance]
+                    app_series = None
+                    for m in meter_ids:
+                        s = self._read_meter_series(h5file, indice, m)
+                        s = s.resample("10s").mean()
+                        if app_series is None:
+                            app_series = s
+                        else:
+                            app_series = app_series.add(s, fill_value=0)
+                    app_series = self._fill_long_gaps_with_zero(app_series)
+                    app_series = app_series.ffill(limit=6)
+                    app_series[app_series < 5] = 0
+                    app_series = app_series.clip(lower=0, upper=self.cutoff)
+                    appl_data = pd.DataFrame({appliance: app_series})
+                    house_data = pd.merge(
+                        house_data, appl_data, how="left", left_index=True, right_index=True
+                    )
+                    house_data[appliance] = house_data[appliance].fillna(0.0)
+
         finally:
             h5file.close()
 
         if self.sampling_rate != "10s":
             house_data = house_data.resample(self.sampling_rate).mean()
 
+        if self.synth_aggregate_apps is not None:
+            house_data["synth_aggregate"] = sum(
+                house_data[app].fillna(0.0)
+                if app in house_data.columns
+                else pd.Series(0.0, index=house_data.index)
+                for app in self.synth_aggregate_apps
+            )
+
         tmp_list = ["aggregate"]
+        if "synth_aggregate" in house_data.columns:
+            tmp_list.append("synth_aggregate")
         for appliance in self.mask_app[1:]:
             tmp_list.append(appliance)
             tmp_list.append(appliance + "_status")
