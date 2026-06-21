@@ -283,8 +283,12 @@ TCN_KL:
     - dishwasher
     - microwave
   model_kwargs:
-    weights_path: "/new-home/e19/e19275/NILM/ukdale_tcn_train/TCNpandula/logs/lightning_logs/version_1/checkpoints/epoch=9999-step=200000.ckpt"
-    meta_path: "/new-home/e19/e19275/NILM/ukdale_tcn_train/TCNpandula/tcn_meta.json"    
+    weights_path:
+      UKDALE: "/new-home/e19/e19275/NILM/ukdale_tcn_train/TCNpandula/logs/lightning_logs/version_1/checkpoints/epoch=9999-step=200000.ckpt"
+      REDD: null
+    meta_path:
+      UKDALE: "/new-home/e19/e19275/NILM/ukdale_tcn_train/TCNpandula/tcn_meta.json"
+      REDD: null
     appliance_name_map:
       Kettle: kettle
       kettle: kettle

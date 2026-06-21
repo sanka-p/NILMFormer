@@ -12,6 +12,7 @@ import torch
 import logging
 
 import torch.nn as nn
+from omegaconf import OmegaConf
 
 from src.helpers.trainer import SeqToSeqTrainer, TserTrainer
 from src.helpers.dataset import NILMDataset, TSDatasetScaling
@@ -323,9 +324,30 @@ def launch_models_training(data_tuple, scaler, expes_config):
 
     if expes_config.name_model == "TCN_KL":
         from src.baselines.nilm.tcn_kl import load_pretrained, TCN_KL_NILMFormerAdapter
+
+        def _resolve_dataset_path(path_config, field_name):
+            if OmegaConf.is_dict(path_config):
+                if expes_config.dataset in path_config and path_config[expes_config.dataset]:
+                    return path_config[expes_config.dataset]
+                if "default" in path_config and path_config["default"]:
+                    return path_config["default"]
+                raise ValueError(
+                    f"TCN_KL {field_name} is not configured for dataset '{expes_config.dataset}'."
+                )
+            if not path_config:
+                raise ValueError(
+                    f"TCN_KL {field_name} is not configured for dataset '{expes_config.dataset}'."
+                )
+            return path_config
+
+        weights_path = _resolve_dataset_path(expes_config.model_kwargs.weights_path, "weights_path")
+        meta_path = expes_config.model_kwargs.get("meta_path")
+        if meta_path is not None:
+            meta_path = _resolve_dataset_path(meta_path, "meta_path")
+
         core, klf, meta = load_pretrained(
-            weights_path=expes_config.model_kwargs.weights_path,
-            meta_path=expes_config.model_kwargs.get("meta_path"),
+            weights_path=weights_path,
+            meta_path=meta_path,
         )
         model_instance = TCN_KL_NILMFormerAdapter(
             core=core,
