@@ -7,7 +7,7 @@ for appliance in "WashingMachine" "Dishwasher" "Microwave" "Fridge"; do
                 echo "Running experiment for $appliance ws=$window_size seed=$seed model=$model..."
                 uv run -m scripts.run_one_expe \
                     --dataset "REDD" \
-                    --sampling_rate "1min" \
+                    --sampling_rate "10s" \
                     --appliance "$appliance" \
                     --window_size "$window_size" \
                     --name_model "$model" \

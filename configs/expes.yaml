@@ -1,5 +1,5 @@
 data_path: !!str data/
-result_path: !!str result/
+result_path: !!str result-synagg/
 dataset: !!str UKDALE
 name_model: !!str NILMFormer
 sampling_rate: !!str 1min

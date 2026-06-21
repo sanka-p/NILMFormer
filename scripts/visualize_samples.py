@@ -17,7 +17,7 @@ from src.helpers.preprocessing import (
 from src.helpers.utils import create_dir
 
 SAMPLING_RATE = "10s"
-WINDOW_SIZE = 128
+WINDOW_SIZE = 256
 DATA_PATH = "data/"
 OUT_BASE = "plots/data_samples"
 SEED = 0
