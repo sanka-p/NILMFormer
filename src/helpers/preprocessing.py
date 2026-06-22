@@ -424,13 +424,6 @@ class UKDALE_DataBuilder(object):
                     "min_off_duration": 16,
                     "min_activation_time": 12,
                 },
-                "WasherDryer": {
-                    "min_threshold": 20,
-                    "max_threshold": 6000,
-                    "min_on_duration": 30,
-                    "min_off_duration": 16,
-                    "min_activation_time": 12,
-                },
                 "microwave": {
                     "min_threshold": 200,
                     "max_threshold": 3000,
@@ -439,7 +432,6 @@ class UKDALE_DataBuilder(object):
                     "min_activation_time": 1,
                 },
                 "dishwasher": {
-                "WasherDryer": {"min_threshold": 20, "max_threshold": 6000},
                     "min_threshold": 10,
                     "max_threshold": 2500,
                     "min_on_duration": 180,
@@ -1409,6 +1401,16 @@ class REDD_DataBuilder(object):
                     "min_off_duration": 16,
                     "min_activation_time": 12,
                 },
+                "WasherDryer": {
+                    # REDD "washer dryer" is a combined unit; the dryer element
+                    # peaks ~3-5kW, so max_threshold must be well above 2500W or
+                    # those steps read as off and no activation registers.
+                    "min_threshold": 20,
+                    "max_threshold": 6000,
+                    "min_on_duration": 30,
+                    "min_off_duration": 16,
+                    "min_activation_time": 12,
+                },
             }
         else:
             # Threshold parameters are in Watts
@@ -1417,6 +1419,7 @@ class REDD_DataBuilder(object):
                 "Microwave": {"min_threshold": 200, "max_threshold": 3000},
                 "Dishwasher": {"min_threshold": 10, "max_threshold": 2500},
                 "WashingMachine": {"min_threshold": 20, "max_threshold": 6000},
+                "WasherDryer": {"min_threshold": 20, "max_threshold": 6000},
             }
 
     def get_house_data(self, house_indicies):
