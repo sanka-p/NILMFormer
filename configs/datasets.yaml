@@ -58,7 +58,7 @@ REDD:
     - WashingMachine
   # REDD exposes the combined washer/dryer meter under the WashingMachine channel.
   WasherDryer:
-    app: !!str WashingMachine
+    app: !!str WasherDryer
     ind_house_train: [3, 5, 6]
     ind_house_valid: [4]
     ind_house_test: [1]

@@ -119,13 +119,14 @@ def _(
     mo,
     split_train_test_pdl_nilmdataset,
 ):
-    def load_test_data(dataset, app_cfg, data_path, sr, ws, seed):
+    def load_test_data(dataset, app_cfg, data_path, sr, ws, seed, synth_aggregate_apps=None):
         if dataset == "UKDALE":
             builder = UKDALE_DataBuilder(
                 data_path=f"{data_path}UKDALE/",
                 mask_app=app_cfg["app"],
                 sampling_rate=sr,
                 window_size=ws,
+                synth_aggregate_apps=synth_aggregate_apps,
             )
             data_test, _ = builder.get_nilm_dataset(
                 house_indicies=app_cfg["ind_house_test"]
@@ -136,6 +137,7 @@ def _(
                 mask_app=app_cfg["app"].strip(),
                 sampling_rate=sr,
                 window_size=ws,
+                synth_aggregate_apps=synth_aggregate_apps,
             )
             data_all, st_all = builder.get_nilm_dataset(
                 house_indicies=app_cfg["house_with_app_i"]
@@ -176,14 +178,30 @@ def _(
     _ds_ws = int(window_size_num.value)
     _ds_seed = int(seed_num.value)
     _ds_data_path = data_path_input.value
+    _ds_synth_apps = _ds_cfg[_ds].get("synth_aggregate_apps")
 
     _ds_csv_root = os.path.join(os.path.dirname(__file__), "..", "data_csv")
     os.makedirs(_ds_csv_root, exist_ok=True)
 
     _ds_saved_dirs = []
     for _ds_app_key, _ds_app_cfg in _ds_cfg[_ds].items():
+        if _ds_app_key == "synth_aggregate_apps":
+            continue
         try:
             _ds_data_test = load_test_data(_ds, _ds_app_cfg, _ds_data_path, _ds_sr, _ds_ws, _ds_seed)
+            _ds_synth_test = (
+                load_test_data(
+                    _ds,
+                    _ds_app_cfg,
+                    _ds_data_path,
+                    _ds_sr,
+                    _ds_ws,
+                    _ds_seed,
+                    synth_aggregate_apps=_ds_synth_apps,
+                )
+                if _ds_synth_apps
+                else None
+            )
         except Exception:
             continue
         if _ds_data_test is None or len(_ds_data_test) == 0:
@@ -194,10 +212,13 @@ def _(
         os.makedirs(_ds_app_dir, exist_ok=True)
         _ds_n = len(_ds_data_test)
         for _ds_i in range(_ds_n):
-            pd.DataFrame({
+            _ds_row = {
                 "aggregate": _ds_data_test[_ds_i, 0, 0, :].astype(float),
                 "ground_truth": _ds_data_test[_ds_i, 1, 0, :].astype(float),
-            }).to_csv(os.path.join(_ds_app_dir, f"{_ds_i}.csv"), index=False)
+            }
+            if _ds_synth_test is not None and len(_ds_synth_test) == _ds_n:
+                _ds_row["synthetic_aggregate"] = _ds_synth_test[_ds_i, 0, 0, :].astype(float)
+            pd.DataFrame(_ds_row).to_csv(os.path.join(_ds_app_dir, f"{_ds_i}.csv"), index=False)
         _ds_saved_dirs.append(f"{os.path.basename(_ds_app_dir)}/ ({_ds_n} samples)")
 
     (
@@ -397,9 +418,11 @@ def _(
         _pl_data = pd.read_csv(_pl_data_path)
         _pl_pred = pd.read_csv(_pl_pred_path)
         _pl_x = np.arange(_pl_ws)
+        _pl_agg_col = "synthetic_aggregate" if model_dd.value == "TCN_KL" and "synthetic_aggregate" in _pl_data.columns else "aggregate"
+        _pl_agg_label = "Synthetic Aggregate" if _pl_agg_col == "synthetic_aggregate" else "Aggregate"
 
         _pl_fig, _pl_ax = plt.subplots(1, 1, figsize=(9.5, 3.0), constrained_layout=True, facecolor="white")
-        _pl_ax.plot(_pl_x, _pl_data["aggregate"].values, color="#1f77b4", lw=0.9, label="Aggregate")
+        _pl_ax.plot(_pl_x, _pl_data[_pl_agg_col].values, color="#1f77b4", lw=0.9, label=_pl_agg_label)
         _pl_ax.plot(_pl_x, _pl_data["ground_truth"].values, color="#2ca02c", lw=0.9, label="Ground-Truth")
         _pl_ax.plot(_pl_x, _pl_pred["prediction"].values, color="#ff7f0e", lw=0.9, label="Prediction")
         _pl_ax.set_xlim(0, _pl_ws - 1)
@@ -445,7 +468,8 @@ def _(
     _fs_agg_list, _fs_gt_list, _fs_pred_list = [], [], []
     for _fs_i in _fs_indices:
         _df_d = pd.read_csv(os.path.join(_fs_data_root, f"{_fs_i}.csv"))
-        _fs_agg_list.append(_df_d["aggregate"].values)
+        _fs_agg_col = "synthetic_aggregate" if model_dd.value == "TCN_KL" and "synthetic_aggregate" in _df_d.columns else "aggregate"
+        _fs_agg_list.append(_df_d[_fs_agg_col].values)
         _fs_gt_list.append(_df_d["ground_truth"].values)
         _fp = os.path.join(_fs_pred_root, f"{_fs_i}.csv")
         _fs_pred_list.append(pd.read_csv(_fp)["prediction"].values if os.path.isfile(_fp) else np.full(_fs_ws, np.nan))
@@ -454,11 +478,12 @@ def _(
     fs_gt_full = np.concatenate(_fs_gt_list)
     fs_pred_full = np.concatenate(_fs_pred_list)
     _fs_total = len(fs_agg_full)
+    _fs_agg_label = "Synthetic Aggregate" if model_dd.value == "TCN_KL" else "Aggregate"
 
     _fs_step = max(1, _fs_total // 8000)
     _fs_x_ov = np.arange(_fs_total)[::_fs_step]
     _fs_fig_ov = go.Figure()
-    _fs_fig_ov.add_trace(go.Scatter(x=_fs_x_ov, y=fs_agg_full[::_fs_step], name="Aggregate", line=dict(color="#1f77b4", width=1), opacity=0.7))
+    _fs_fig_ov.add_trace(go.Scatter(x=_fs_x_ov, y=fs_agg_full[::_fs_step], name=_fs_agg_label, line=dict(color="#1f77b4", width=1), opacity=0.7))
     _fs_fig_ov.add_trace(go.Scatter(x=_fs_x_ov, y=fs_gt_full[::_fs_step], name="Ground-Truth", line=dict(color="#2ca02c", width=1)))
     _fs_fig_ov.add_trace(go.Scatter(x=_fs_x_ov, y=fs_pred_full[::_fs_step], name="Prediction", line=dict(color="#ff7f0e", width=1)))
     _fs_fig_ov.update_layout(
@@ -493,7 +518,7 @@ def _(
     _det_x = np.arange(_x0, _x1 + 1)
     _det_step = max(1, len(_det_x) // 5000)
     _det_fig = go.Figure()
-    _det_fig.add_trace(go.Scatter(x=_det_x[::_det_step], y=_det_agg[::_det_step], name="Aggregate", line=dict(color="#1f77b4", width=1), opacity=0.7))
+    _det_fig.add_trace(go.Scatter(x=_det_x[::_det_step], y=_det_agg[::_det_step], name=("Synthetic Aggregate" if model_dd.value == "TCN_KL" else "Aggregate"), line=dict(color="#1f77b4", width=1), opacity=0.7))
     _det_fig.add_trace(go.Scatter(x=_det_x[::_det_step], y=_det_gt[::_det_step], name="Ground-Truth", line=dict(color="#2ca02c", width=1)))
     _det_fig.add_trace(go.Scatter(x=_det_x[::_det_step], y=_det_pred[::_det_step], name="Prediction", line=dict(color="#ff7f0e", width=1)))
     _det_fig.update_layout(
@@ -560,7 +585,8 @@ def _(mo, np, os, pd, viz_dataset_dd, viz_model_dd, viz_ws_num):
     _vz_agg, _vz_gt, _vz_pred = [], [], []
     for _vz_i in _vz_indices:
         _vz_df = pd.read_csv(os.path.join(_vz_data_root, f"{_vz_i}.csv"))
-        _vz_agg.append(_vz_df["aggregate"].values)
+        _vz_agg_col = "synthetic_aggregate" if viz_model_dd.value == "TCN_KL" and "synthetic_aggregate" in _vz_df.columns else "aggregate"
+        _vz_agg.append(_vz_df[_vz_agg_col].values)
         _vz_gt.append(_vz_df["ground_truth"].values)
         _vz_pf = os.path.join(_vz_pred_root, f"{_vz_i}.csv")
         _vz_pred.append(pd.read_csv(_vz_pf)["prediction"].values if os.path.isfile(_vz_pf) else np.full(_vz_ws, np.nan))
@@ -596,8 +622,8 @@ def _(
     _vp_ax.plot(_vp_x, _vp_gt, color="#2ca02c", lw=0.9)
     _vp_ax.plot(_vp_x, _vp_pred, color="#ff7f0e", lw=0.9)
     _vp_ax.set_xlim(0, len(_vp_x) - 1)
-    _vp_ax.set_xlabel("")
-    _vp_ax.set_ylabel("")
+    _vp_ax.set_xlabel("Sampling Points")
+    _vp_ax.set_ylabel("Power (W)")
 
     viz_buf = io.BytesIO()
     _vp_fig.savefig(viz_buf, format="png", dpi=130, bbox_inches="tight", transparent=True)

@@ -424,6 +424,13 @@ class UKDALE_DataBuilder(object):
                     "min_off_duration": 16,
                     "min_activation_time": 12,
                 },
+                "WasherDryer": {
+                    "min_threshold": 20,
+                    "max_threshold": 6000,
+                    "min_on_duration": 30,
+                    "min_off_duration": 16,
+                    "min_activation_time": 12,
+                },
                 "microwave": {
                     "min_threshold": 200,
                     "max_threshold": 3000,
@@ -432,6 +439,7 @@ class UKDALE_DataBuilder(object):
                     "min_activation_time": 1,
                 },
                 "dishwasher": {
+                "WasherDryer": {"min_threshold": 20, "max_threshold": 6000},
                     "min_threshold": 10,
                     "max_threshold": 2500,
                     "min_on_duration": 180,
@@ -1261,33 +1269,39 @@ class REDD_DataBuilder(object):
             "Dishwasher": [6],
             "Microwave": [11],
             "WashingMachine": [10, 20],
+            "WasherDryer": [10, 20],
         },
         2: {
             "Fridge": [9],
             "Dishwasher": [10],
             "Microwave": [6],
             "WashingMachine": [7],
+            "WasherDryer": [7],
         },
         3: {
             "Fridge": [7],
             "Dishwasher": [9],
             "Microwave": [16],
             "WashingMachine": [13, 14],
+            "WasherDryer": [13, 14],
         },
         4: {
             "Dishwasher": [15],
             "WashingMachine": [7],
+            "WasherDryer": [7],
         },
         5: {
             "Fridge": [18],
             "Dishwasher": [20],
             "Microwave": [3],
             "WashingMachine": [8, 9],
+            "WasherDryer": [8, 9],
         },
         6: {
             "Fridge": [8],
             "Dishwasher": [9],
             "WashingMachine": [4],
+            "WasherDryer": [4],
         },
     }
 
@@ -1779,6 +1793,7 @@ class REDD_DataBuilder(object):
                 "Dishwasher",
                 "Microwave",
                 "WashingMachine",
+                "WasherDryer",
             ], f"Selected appliance unknown for REDD Dataset, got: {appliance}"
         return
 
