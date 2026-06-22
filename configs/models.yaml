@@ -278,17 +278,18 @@ NILMFormer:
 TCN_KL:
   synth_aggregate_apps:
     - fridge
-    - washing_machine
+#   - washing_machine
+    - washer_dryer
     - kettle
     - dishwasher
     - microwave
   model_kwargs:
     weights_path:
       UKDALE: "/new-home/e19/e19275/NILM/ukdale_tcn_train/TCNpandula/logs/lightning_logs/version_1/checkpoints/epoch=9999-step=200000.ckpt"
-      REDD: null
+      REDD: "/new-home/e19/e19275/NILM/redd_tcn_train/NILM_DeepL/Praveen_TCN_logs/Kl_new_sampler_red/lightning_logs/version_4/checkpoints/epoch=9999-step=10000.ckpt"
     meta_path:
       UKDALE: "/new-home/e19/e19275/NILM/ukdale_tcn_train/TCNpandula/tcn_meta.json"
-      REDD: null
+      REDD: "/new-home/e19/e19275/NILM/redd_tcn_train/NILM_DeepL/TCNpandula/tcn_meta.json"
     appliance_name_map:
       Kettle: kettle
       kettle: kettle
@@ -298,6 +299,8 @@ TCN_KL:
       dishwasher: dish washer
       WashingMachine: washing machine
       washing_machine: washing machine
+      WasherDryer: washer dryer
+      washer_dryer: washer dryer
       Microwave: microwave
       microwave: microwave
   model_training_param:
