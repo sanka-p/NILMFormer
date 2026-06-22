@@ -56,6 +56,12 @@ REDD:
     - Dishwasher
     - Microwave
     - WashingMachine
+  # REDD exposes the combined washer/dryer meter under the WashingMachine channel.
+  WasherDryer:
+    app: !!str WashingMachine
+    ind_house_train: [3, 5, 6]
+    ind_house_valid: [4]
+    ind_house_test: [1]
   Fridge:
     app: !!str Fridge
     ind_house_train: [3, 5, 6]
