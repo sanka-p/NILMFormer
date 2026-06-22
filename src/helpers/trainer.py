@@ -453,6 +453,8 @@ class SeqToSeqTrainer:
             # ===================backward==================== #
             loss_train += loss.item()
             loss.backward()
+            # Gradient clipping keeps the loss from exploding on sparse REDD windows.
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
             self.optimizer.step()
 
         loss_train = loss_train / len(self.train_loader)
@@ -839,6 +841,8 @@ class TserTrainer:
             # ===================backward==================== #
             loss_train += loss.item()
             loss.backward()
+            # Gradient clipping keeps the loss from exploding on sparse REDD windows.
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
             self.optimizer.step()
 
         loss_train = loss_train / len(self.train_loader)
