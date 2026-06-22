@@ -78,7 +78,7 @@ REDD:
     ind_house_valid: [2]
     ind_house_test: [1]
   WashingMachine:
-    app: !!str WashingMachine
+    app: !!str WasherDryer
     # Houses 2 & 5 have dead washer-dryer meters (flat ~8W); keep valid/test on
     # houses with real activations (h1, h3, h4).
     ind_house_train: [3, 5, 6]
