@@ -1,6 +1,6 @@
 #!/bin/bash
 
-for appliance in "WasherDryer"; do
+for appliance in "WashingMachine"; do
     for window_size in 128 256 512; do
         for seed in 0 1 2; do
             echo "Running experiment for $appliance ws=$window_size seed=$seed model=TCN_KL..."
