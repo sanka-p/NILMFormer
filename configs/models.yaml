@@ -307,3 +307,270 @@ TCN_KL:
     lr: !!float 0.0
     wd: !!float 0.0
     training_in_model: false
+
+# ==== TCN ablation arms ==== #
+# Same architecture as the pretrained TCN_KL, trained in-repo with the baseline recipe.
+# Ladder: TCN (no KL) -> TCN_KL_scratch (+KL) -> TCN_KL_aug (+synthetic data) -> TCN_KL
+# (+curation, external recipe). See src/helpers/tcn_ablation.py.
+TCN:
+  synth_aggregate_apps:
+    - fridge
+    - washing_machine
+    - kettle
+    - dishwasher
+    - microwave
+  model_kwargs:
+    use_kl: false
+  model_training_param:
+    lr: !!float 1e-4
+    wd: !!float 0
+    training_in_model: false
+
+TCN_KL_scratch:
+  synth_aggregate_apps:
+    - fridge
+    - washing_machine
+    - kettle
+    - dishwasher
+    - microwave
+  model_kwargs:
+    use_kl: true
+    kl_order: 10
+  model_training_param:
+    lr: !!float 1e-4
+    wd: !!float 0
+    training_in_model: false
+
+TCN_KL_aug:
+  synth_aggregate_apps:
+    - fridge
+    - washing_machine
+    - kettle
+    - dishwasher
+    - microwave
+  model_kwargs:
+    use_kl: true
+    kl_order: 10
+    augment: true
+    # "replace" trains on synthetic windows only, matching how the pretrained TCN_KL was
+    # trained, so TCN_KL - TCN_KL_aug isolates curation alone. "mix" keeps the real
+    # windows and appends aug_ratio x as many synthetic ones.
+    aug_mode: !!str replace
+    aug_ratio: !!float 1.0
+  model_training_param:
+    lr: !!float 1e-4
+    wd: !!float 0
+    training_in_model: false
+
+# Externally pretrained, per-APPLIANCE counterpart of TCN_KL: same curated data and
+# synthetic-stream recipe, but a single-output head (n_appliances=1), so it compares at the
+# same head width as the in-repo ablation arms. Checkpoints carry their own `meta` block
+# (kl_basis / average_powers / kl_order), so no meta_path is needed. Available for kettle,
+# fridge, microwave and washing_machine only -- there is no per-appliance dishwasher model.
+TCN_KL_perapp:
+  synth_aggregate_apps:
+    - fridge
+    - washing_machine
+    - kettle
+    - dishwasher
+    - microwave
+  model_kwargs:
+    weights_path:
+      UKDALE: "/new-home/e19/e19275/NILM/ukdale_tcn_train/TCNpandula/models_per_appliance/{app}/checkpoints/best.ckpt"
+    appliance_name_map:
+      Kettle: kettle
+      kettle: kettle
+      Fridge: fridge
+      fridge: fridge
+      Microwave: microwave
+      microwave: microwave
+      WashingMachine: washing machine
+      washing_machine: washing machine
+      Dishwasher: dish washer
+      dishwasher: dish washer
+    # Checkpoint directory names where they differ from the repo's appliance key.
+    app_dir_map:
+      dishwasher: dish_washer
+  model_training_param:
+    lr: !!float 0.0
+    wd: !!float 0.0
+    training_in_model: false
+
+# Same curated per-appliance models as TCN_KL_perapp, but the ~100-epoch training
+# budget ("nilmformer-like" parameter setting). Checkpoints carry their own `meta`.
+TCN_KL_perapp_nilmformerlike:
+  synth_aggregate_apps:
+    - fridge
+    - washing_machine
+    - kettle
+    - dishwasher
+    - microwave
+  model_kwargs:
+    weights_path:
+      UKDALE: "/new-home/e19/e19275/NILM/ukdale_tcn_train/TCNpandula/models_per_appliance_100epochs/{app}/checkpoints/best.ckpt"
+    appliance_name_map:
+      Kettle: kettle
+      kettle: kettle
+      Fridge: fridge
+      fridge: fridge
+      Microwave: microwave
+      microwave: microwave
+      WashingMachine: washing machine
+      washing_machine: washing machine
+      Dishwasher: dish washer
+      dishwasher: dish washer
+    # Checkpoint directory names where they differ from the repo's appliance key.
+    app_dir_map:
+      dishwasher: dish_washer
+  model_training_param:
+    lr: !!float 0.0
+    wd: !!float 0.0
+    training_in_model: false
+
+# Curated activations + this repo's training recipe: the missing cell that makes curation
+# the only difference from TCN_KL_scratch. Waveforms come from ukdale_curated (house-matched
+# to what this repo draws activations from), everything else -- duty cycles, stream
+# generation, scaler, optimiser, 3 epochs -- is identical to the other arms.
+# max_segments: null lifts the 3000 default so the arm is not handed a smaller activation
+# pool than arms 1-2, which use every real training window.
+TCN_KL_aug_curated:
+  synth_aggregate_apps:
+    - fridge
+    - washing_machine
+    - kettle
+    - dishwasher
+    - microwave
+  model_kwargs:
+    use_kl: true
+    kl_order: 10
+    augment: true
+    aug_mode: !!str replace
+    aug_ratio: !!float 1.0
+    segments_source: !!str curated
+    max_segments: null
+  model_training_param:
+    lr: !!float 1e-4
+    wd: !!float 0
+    training_in_model: false
+
+# Pool-size sweep point: identical to TCN_KL_aug_curated except the TARGET appliance's
+# curated activation pool is capped at 20. Other appliances stay at full pool so only the
+# target's activation diversity varies. Used to locate the threshold where curation stops
+# helping (bracketed by REDD microwave 44 = loses and UK-DALE WM 163 = wins).
+TCN_KL_aug_curated_n20:
+  synth_aggregate_apps:
+    - fridge
+    - washing_machine
+    - kettle
+    - dishwasher
+    - microwave
+  model_kwargs:
+    use_kl: true
+    kl_order: 10
+    augment: true
+    aug_mode: !!str replace
+    aug_ratio: !!float 1.0
+    segments_source: !!str curated
+    max_segments: null
+    max_segments_target: 20
+  model_training_param:
+    lr: !!float 1e-4
+    wd: !!float 0
+    training_in_model: false
+
+# Pool-size sweep point: identical to TCN_KL_aug_curated except the TARGET appliance's
+# curated activation pool is capped at 50. Other appliances stay at full pool so only the
+# target's activation diversity varies. Used to locate the threshold where curation stops
+# helping (bracketed by REDD microwave 44 = loses and UK-DALE WM 163 = wins).
+TCN_KL_aug_curated_n50:
+  synth_aggregate_apps:
+    - fridge
+    - washing_machine
+    - kettle
+    - dishwasher
+    - microwave
+  model_kwargs:
+    use_kl: true
+    kl_order: 10
+    augment: true
+    aug_mode: !!str replace
+    aug_ratio: !!float 1.0
+    segments_source: !!str curated
+    max_segments: null
+    max_segments_target: 50
+  model_training_param:
+    lr: !!float 1e-4
+    wd: !!float 0
+    training_in_model: false
+
+# Pool-size sweep point: identical to TCN_KL_aug_curated except the TARGET appliance's
+# curated activation pool is capped at 100. Other appliances stay at full pool so only the
+# target's activation diversity varies. Used to locate the threshold where curation stops
+# helping (bracketed by REDD microwave 44 = loses and UK-DALE WM 163 = wins).
+TCN_KL_aug_curated_n100:
+  synth_aggregate_apps:
+    - fridge
+    - washing_machine
+    - kettle
+    - dishwasher
+    - microwave
+  model_kwargs:
+    use_kl: true
+    kl_order: 10
+    augment: true
+    aug_mode: !!str replace
+    aug_ratio: !!float 1.0
+    segments_source: !!str curated
+    max_segments: null
+    max_segments_target: 100
+  model_training_param:
+    lr: !!float 1e-4
+    wd: !!float 0
+    training_in_model: false
+
+# Pool-size sweep point: identical to TCN_KL_aug_curated except the TARGET appliance's
+# curated activation pool is capped at 200. Other appliances stay at full pool so only the
+# target's activation diversity varies. Used to locate the threshold where curation stops
+# helping (bracketed by REDD microwave 44 = loses and UK-DALE WM 163 = wins).
+TCN_KL_aug_curated_n200:
+  synth_aggregate_apps:
+    - fridge
+    - washing_machine
+    - kettle
+    - dishwasher
+    - microwave
+  model_kwargs:
+    use_kl: true
+    kl_order: 10
+    augment: true
+    aug_mode: !!str replace
+    aug_ratio: !!float 1.0
+    segments_source: !!str curated
+    max_segments: null
+    max_segments_target: 200
+  model_training_param:
+    lr: !!float 1e-4
+    wd: !!float 0
+    training_in_model: false
+
+# Variant C of the 2x2 ablation: synthetic augmentation WITHOUT the KL front end.
+# Identical to TCN_KL_aug_curated except use_kl=false, so C->D isolates KL given
+# augmentation, and A->C isolates augmentation given no KL.
+TCN_aug_curated:
+  synth_aggregate_apps:
+    - fridge
+    - washing_machine
+    - kettle
+    - dishwasher
+    - microwave
+  model_kwargs:
+    use_kl: false
+    augment: true
+    aug_mode: !!str replace
+    aug_ratio: !!float 1.0
+    segments_source: !!str curated
+    max_segments: null
+  model_training_param:
+    lr: !!float 1e-4
+    wd: !!float 0
+    training_in_model: false

@@ -31,6 +31,7 @@ from src.baselines.nilm.unetnilm import UNetNiLM
 from src.baselines.nilm.dresnets import DAResNet, DResNet
 from src.baselines.nilm.diffnilm import DiffNILM
 from src.baselines.nilm.tsilnet import TSILNet
+from src.baselines.nilm.tcn import TCN_NILM
 
 # Transformer-based
 from src.baselines.nilm.bert4nilm import BERT4NILM
@@ -46,6 +47,26 @@ from src.baselines.tser.inceptiontime import Inception
 # ==== NILMFormer ==== #
 from src.nilmformer.congif import NILMFormerConfig
 from src.nilmformer.model import NILMFormer
+
+
+#: Ablation arms sharing the trainable TCN. Their extra model_kwargs steer data
+#: preparation in scripts/run_one_expe.py and are stripped before reaching the
+#: constructor by launch_models_training.
+TCN_ABLATION_MODELS = (
+    "TCN", "TCN_KL_scratch", "TCN_KL_aug", "TCN_KL_aug_curated", "TCN_aug_curated",
+    # curated-pool-size sweep: identical to TCN_KL_aug_curated but with the target
+    # appliance's activation pool capped, to locate where curation stops helping.
+    "TCN_KL_aug_curated_n20", "TCN_KL_aug_curated_n50", "TCN_KL_aug_curated_n100", "TCN_KL_aug_curated_n200",
+)
+
+#: Externally pretrained TCNs loaded from a Lightning checkpoint and never trained
+#: here. TCN_KL is the 8-output model; TCN_KL_perapp is the matching single-output
+#: checkpoint trained per appliance, so it compares at the same head width as the
+#: in-repo ablation arms.
+PRETRAINED_TCN_MODELS = ("TCN_KL", "TCN_KL_perapp", "TCN_KL_perapp_nilmformerlike")
+TCN_ABLATION_DATA_KWARGS = (
+    "kl_order", "augment", "aug_mode", "aug_ratio", "segments_source", "max_segments", "max_segments_target",
+)
 
 
 def get_model_instance(name_model, c_in, window_size, **kwargs):
@@ -86,6 +107,8 @@ def get_model_instance(name_model, c_in, window_size, **kwargs):
         inst = Inception(in_channels=1, nb_class=1, **kwargs)
     elif name_model == "NILMFormer":
         inst = NILMFormer(NILMFormerConfig(c_in=1, c_embedding=c_in - 1, **kwargs))
+    elif name_model in TCN_ABLATION_MODELS:
+        inst = TCN_NILM(window_size=window_size, c_in=1, **kwargs)
     else:
         raise ValueError("Model name {} unknown".format(name_model))
 
@@ -186,8 +209,8 @@ def nilm_model_training(inst_model, tuple_data, scaler, expes_config):
         path_checkpoint=expes_config.result_path,
     )
 
-    if expes_config.name_model == "TCN_KL":
-        logging.info("Skipping training (pretrained TCN_KL)")
+    if expes_config.name_model in PRETRAINED_TCN_MODELS:
+        logging.info("Skipping training (pretrained %s)", expes_config.name_model)
     else:
         logging.info("Model training...")
         model_trainer.train(expes_config.epochs)
@@ -322,7 +345,12 @@ def launch_models_training(data_tuple, scaler, expes_config):
     if "threshold" in expes_config.model_kwargs:
         expes_config.model_kwargs.threshold = expes_config.threshold
 
-    if expes_config.name_model == "TCN_KL":
+    if expes_config.name_model in TCN_ABLATION_MODELS:
+        # These drive data preparation upstream, not the module signature.
+        for key in TCN_ABLATION_DATA_KWARGS:
+            expes_config.model_kwargs.pop(key, None)
+
+    if expes_config.name_model in PRETRAINED_TCN_MODELS:
         from src.baselines.nilm.tcn_kl import load_pretrained, TCN_KL_NILMFormerAdapter
 
         def _resolve_dataset_path(path_config, field_name):
@@ -340,10 +368,25 @@ def launch_models_training(data_tuple, scaler, expes_config):
                 )
             return path_config
 
+        # Per-appliance checkpoints live in one directory per appliance, so the configured
+        # path may carry an {app} placeholder. Dataset-keyed paths still work unchanged.
+        # The checkpoint directory name does not always equal the repo's appliance key
+        # (repo "dishwasher" vs directory "dish_washer"), so allow an explicit mapping.
+        app_dir_map = dict(expes_config.model_kwargs.get("app_dir_map") or {})
+        app_dir = app_dir_map.get(expes_config.app, expes_config.app)
+
         weights_path = _resolve_dataset_path(expes_config.model_kwargs.weights_path, "weights_path")
+        weights_path = str(weights_path).format(app=app_dir)
         meta_path = expes_config.model_kwargs.get("meta_path")
         if meta_path is not None:
             meta_path = _resolve_dataset_path(meta_path, "meta_path")
+            meta_path = str(meta_path).format(app=app_dir)
+
+        if not os.path.isfile(weights_path):
+            raise FileNotFoundError(
+                f"{expes_config.name_model}: no checkpoint for appliance "
+                f"'{expes_config.app}' at {weights_path}"
+            )
 
         core, klf, meta = load_pretrained(
             weights_path=weights_path,

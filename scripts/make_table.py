@@ -13,6 +13,12 @@ Scanning is expensive (each `.pt` carries the model weights and full prediction 
 19-130 MB), so extracted metrics are cached one row per run in `results/runs_cache.csv`
 and only unseen files are re-read on subsequent invocations.
 
+A second table reports the appliance-combination metrics of Welikala et al. (IEEE TSG 2019)
+-- Aci, Afm and Apd. Those are read from `results/osw_runs.csv`, written by
+`scripts/score_osw.py`, because they are per-RUN rather than per-appliance: a combination
+score covers every appliance jointly and so cannot come from a single `.pt`. Pass `--no-osw`
+to omit the block.
+
 Usage:
     uv run -m scripts.make_table
     uv run -m scripts.make_table --result-dir 2207-results/result
@@ -33,17 +39,36 @@ import torch
 
 # Baselines live in one directory, the pretrained TCN_KL ("Proposed") in another; the two
 # are disjoint in model, so both are read by default and unioned.
-DEFAULT_RESULT_DIRS = ["result-synagg", "2207-results/result-synagg-overfit"]
+DEFAULT_RESULT_DIRS = [
+    "result-synagg",
+    "2207-results/result-synagg-overfit",
+    "result-tcn-ablation",
+    # Curated pool-size sweep (Microwave only, caps 20/50/100/200). Kept out of
+    # DEFAULT_MODELS so it does not clutter the main table, but cached for
+    # scripts/make_pool_sweep.py.
+    "result-curated-scaling",
+    # REDD baselines (and a duplicate copy of the UK-DALE ones). Listed LAST so the
+    # UK-DALE duplicates lose the priority tie-break in aggregate() and the existing
+    # numbers are untouched; only the REDD rows, which exist nowhere else, are new.
+    "2207-results/result",
+]
 DEFAULT_CACHE = Path("results/runs_cache.csv")
 
 # Metrics pulled out of log["test_metrics_timestamp"] and stored in the cache.
-METRIC_COLUMNS = [
-    "MAE", "F1_SCORE", "ACCURACY", "PRECISION", "RECALL", "TECA", "NDE", "SAE",
+PT_METRIC_COLUMNS = [
+    "MAE", "F1_SCORE", "ACCURACY", "BALANCED_ACCURACY", "PRECISION", "RECALL",
+    "TECA", "NDE", "SAE",
 ]
+# Appliance-combination metrics. These are per-RUN, not per-appliance: they come from
+# results/osw_runs.csv (written by scripts/score_osw.py) rather than from any single .pt.
+OSW_METRIC_COLUMNS = ["ACI", "ACI_ACT", "AFM", "AFM_ACT", "APD", "APA_POOLED"]
+METRIC_COLUMNS = PT_METRIC_COLUMNS + OSW_METRIC_COLUMNS
 CACHE_COLUMNS = [
     "SourceDir", "SourceFile", "Model", "Dataset", "Appliance",
     "SamplingRate", "WindowSize", "Seed",
 ] + METRIC_COLUMNS
+DEFAULT_OSW_CSV = Path("results/osw_runs.csv")
+OSW_RUN_KEY = ("Model", "Dataset", "SamplingRate", "WindowSize", "Seed")
 
 DATASET_LABEL = {"UKDALE": "UK-DALE", "REDD": "REDD", "REFIT": "REFIT"}
 DATASET_ORDER = ["UKDALE", "REDD", "REFIT"]
@@ -61,6 +86,21 @@ APPLIANCE_ORDER = ["WashingMachine", "Dishwasher", "Kettle", "Microwave", "Fridg
 # TCN_KL is the pretrained "Proposed" model (src/helpers/expes.py:325).
 MODEL_LABEL = {
     "TCN_KL": "Proposed",
+    "TCN_KL_perapp": "Proposed 1app",
+    "TCN_KL_aug_curated": "TCN+KL+Cur+Aug",
+    "TCN_KL_perapp_nilmformerlike": "Prop 1app NFlike",
+    # Ablation ladder for the Proposed model: no curation / no augmentation / no KL,
+    # then +KL, then +synthetic training data. See src/helpers/tcn_ablation.py.
+    "TCN": "TCN",
+    "TCN_KL_scratch": "TCN+KL",
+    "TCN_KL_aug": "TCN+KL+aug",
+    # Variant C of the 2x2: curated synthetic data WITHOUT the KL front end.
+    "TCN_aug_curated": "TCN+Cur+Aug",
+    # Curated pool-size sweep; N is the number of distinct curated activations.
+    "TCN_KL_aug_curated_n20": "TCN+KL+Cur+Aug n20",
+    "TCN_KL_aug_curated_n50": "TCN+KL+Cur+Aug n50",
+    "TCN_KL_aug_curated_n100": "TCN+KL+Cur+Aug n100",
+    "TCN_KL_aug_curated_n200": "TCN+KL+Cur+Aug n200",
     "NILMFormer": "NILMFormer",
     "BERT4NILM": "BERT4NILM",
     "BiLSTM": "BiLSTM",
@@ -69,14 +109,33 @@ MODEL_LABEL = {
     "DAResNet": "DAResNet",
 }
 PROPOSED_MODEL = "TCN_KL"
-DEFAULT_MODELS = ["TCN_KL", "NILMFormer", "BERT4NILM", "BiLSTM", "BiGRU"]
+DEFAULT_MODELS = [
+    "TCN_KL", "TCN_KL_perapp", "TCN_KL_perapp_nilmformerlike", "TCN_KL_aug_curated", "TCN_KL_aug", "TCN_KL_scratch", "TCN",
+    "NILMFormer", "BERT4NILM", "BiLSTM", "BiGRU",
+]
 
 # Display label -> (cache column, formatter, direction of "better").
 # ACCURACY and F1_SCORE are stored as fractions (e.g. 0.893), hence the x100.
 METRICS = {
+    # SCA is plain per-timestamp accuracy on a heavily OFF-dominated signal, so it is
+    # nearly saturated for every method (an all-OFF predictor scores ~99% on kettle).
+    # BA is balanced accuracy -- the mean of sensitivity and specificity -- which is
+    # already computed in src/helpers/metrics.py:128 and separates the methods properly.
     "SCA %": ("ACCURACY", lambda v: f"{100 * v:.2f}", "max"),
+    "BA %": ("BALANCED_ACCURACY", lambda v: f"{100 * v:.2f}", "max"),
     "F1 %": ("F1_SCORE", lambda v: f"{100 * v:.2f}", "max"),
     "MAE": ("MAE", lambda v: f"{v:.2f}", "min"),
+}
+
+# Appliance-combination metrics, rendered in their own table (they are per-run, not
+# per-appliance). Note the scale asymmetry inherited from src/helpers/osw_metrics.py: ACI
+# and APD are already percentages, AFM is a fraction like F1_SCORE and so needs the x100.
+OSW_METRICS = {
+    "Aci %": ("ACI", lambda v: f"{v:.2f}", "max"),
+    "Aci % act": ("ACI_ACT", lambda v: f"{v:.2f}", "max"),
+    "Afm %": ("AFM", lambda v: f"{100 * v:.2f}", "max"),
+    "Afm % act": ("AFM_ACT", lambda v: f"{100 * v:.2f}", "max"),
+    "Apd %": ("APD", lambda v: f"{v:.2f}", "max"),
 }
 
 MISSING = "--"
@@ -141,7 +200,8 @@ def read_metrics(pt_file):
     # model), so read defensively -- only the test metrics are guaranteed present.
     metrics = log.get("test_metrics_timestamp", {}) or {}
     out = {}
-    for name in METRIC_COLUMNS:
+    # Only the per-.pt metrics: the OSW columns are per-run and are merged in later.
+    for name in PT_METRIC_COLUMNS:
         value = metrics.get(name)
         out[name] = "" if value is None else float(value)
     return out
@@ -151,7 +211,12 @@ def load_cache(cache_path):
     if not cache_path.exists():
         return []
     with open(cache_path, newline="") as f:
-        return list(csv.DictReader(f))
+        # Backfill any column the cache predates (e.g. the OSW metrics) so old rows do not
+        # KeyError in aggregate(). This is what lets new metric columns be added without
+        # forcing a --refresh over every result file.
+        return [
+            {**dict.fromkeys(CACHE_COLUMNS, ""), **row} for row in csv.DictReader(f)
+        ]
 
 
 def write_cache(cache_path, rows):
@@ -206,6 +271,44 @@ def scan(result_dirs, cache_path, refresh, jobs):
     return rows
 
 
+def merge_osw(rows, osw_csv):
+    """Stamp the per-run OSW metrics from `osw_csv` onto the scanned rows.
+
+    The OSW metrics are per (model, dataset, sampling rate, window size, seed) -- one
+    appliance-combination score for the whole run -- while `rows` has one entry per
+    appliance. The same value is written to every appliance row of a run, which is harmless
+    because aggregate() means over window sizes and seeds and the value is constant within
+    a run.
+
+    The values are always overwritten, never cached-and-kept: re-running
+    scripts/score_osw.py is what refreshes them, so runs_cache.csv is not authoritative for
+    these columns and no cache invalidation dance is needed.
+    """
+    osw_csv = Path(osw_csv)
+    if not osw_csv.exists():
+        warn(f"OSW score file not found, ACI/AFM/APD columns will be empty: {osw_csv} "
+             f"(create it with: uv run -m scripts.score_osw)")
+        return
+
+    by_run = {}
+    with open(osw_csv, newline="") as f:
+        for record in csv.DictReader(f):
+            by_run[tuple(record.get(k, "") for k in OSW_RUN_KEY)] = record
+
+    matched_models = set()
+    for row in rows:
+        record = by_run.get(tuple(row[k] for k in OSW_RUN_KEY))
+        if record is None:
+            continue
+        matched_models.add(row["Model"])
+        for column in OSW_METRIC_COLUMNS:
+            row[column] = record.get(column, "")
+
+    for model in sorted({row["Model"] for row in rows} - matched_models):
+        warn(f"no OSW scores for model {model} in {osw_csv}; run: "
+             f"uv run -m scripts.score_osw --models {model}")
+
+
 # --------------------------------------------------------------------------------------
 # Stage 2: aggregate over window sizes and seeds
 # --------------------------------------------------------------------------------------
@@ -242,7 +345,15 @@ def aggregate(rows, result_dirs, sampling_rate, window_sizes, seeds):
     for key, group_rows in groups.items():
         means = {}
         for column in METRIC_COLUMNS:
-            values = [float(r[column]) for r in group_rows if r[column] not in ("", None)]
+            # .get, not [...]: rows scanned fresh from .pt files in this same invocation
+            # carry only PT_METRIC_COLUMNS. The OSW columns arrive later via merge_osw (for
+            # runs that have OSW scores) or via load_cache's backfill (for cached rows), so
+            # a freshly-read run with no OSW score has no such key at all.
+            values = [
+                float(r[column])
+                for r in group_rows
+                if r.get(column) not in ("", None)
+            ]
             means[column] = sum(values) / len(values) if values else None
         means["n"] = len(group_rows)
         agg[key] = means
@@ -391,6 +502,88 @@ def render(agg, models, use_color):
     return lines
 
 
+def render_osw(agg, models, use_color):
+    """Build the appliance-combination table: metrics x models, dataset columns only.
+
+    These metrics are per (model, dataset) -- a combination score spans every appliance at
+    once -- so unlike the main table there is no appliance split; showing one would just
+    repeat the same number five times.
+    """
+    datasets = ordered({d for _, d, _ in agg}, DATASET_ORDER)
+
+    def value_for(model, dataset, column):
+        """The run's value, taken from any appliance group; they must all agree."""
+        values = [
+            agg[(m, d, a)][column]
+            for (m, d, a) in agg
+            if m == model and d == dataset and agg[(m, d, a)][column] is not None
+        ]
+        if not values:
+            return None
+        if max(values) - min(values) > 1e-6:
+            warn(f"{dataset}/{model}: OSW metric {column} differs across appliance groups "
+                 f"({min(values):.4f}..{max(values):.4f}); the run is only partially scored")
+        return values[0]
+
+    present = [
+        d for d in datasets
+        if any(value_for(m, d, c) is not None for m in models for c in OSW_METRIC_COLUMNS)
+    ]
+    if not present:
+        return []
+
+    metric_width = max(len("Metric"), *(len(label) for label in OSW_METRICS))
+    method_width = max(len("Method"), max(len(MODEL_LABEL.get(m, m)) for m in models) + 2)
+
+    data_widths = {}
+    for dataset in present:
+        width = len(DATASET_LABEL.get(dataset, dataset))
+        for label, (column, fmt, _) in OSW_METRICS.items():
+            for model in models:
+                value = value_for(model, dataset, column)
+                width = max(width, len(fmt(value) if value is not None else MISSING))
+        data_widths[dataset] = width
+
+    flat_widths = [metric_width, method_width] + [data_widths[d] for d in present]
+
+    lines = [rule("┌", "┬", "┐", flat_widths)]
+    header = ["Metric".ljust(metric_width), "Method".ljust(method_width)]
+    header += [DATASET_LABEL.get(d, d).rjust(data_widths[d]) for d in present]
+    lines.append("│ " + " │ ".join(header) + " │")
+
+    for label, (column, fmt, direction) in OSW_METRICS.items():
+        lines.append(rule("├", "┼", "┤", flat_widths))
+
+        best = {}
+        for dataset in present:
+            values = [
+                v for v in (value_for(m, dataset, column) for m in models) if v is not None
+            ]
+            if values:
+                best[dataset] = max(values) if direction == "max" else min(values)
+
+        for i, model in enumerate(models):
+            name = MODEL_LABEL.get(model, model)
+            is_proposed = model == PROPOSED_MODEL
+            method = (
+                name.ljust(method_width - 2) + " *" if is_proposed
+                else name.ljust(method_width)
+            )
+            row = [
+                (label if i == 0 else "").ljust(metric_width),
+                f"{BOLD}{method}{RESET}" if is_proposed and use_color else method,
+            ]
+            for dataset in present:
+                value = value_for(model, dataset, column)
+                text = fmt(value) if value is not None else MISSING
+                is_best = value is not None and value == best.get(dataset)
+                row.append(cell(text, data_widths[dataset], is_best, use_color))
+            lines.append("│ " + " │ ".join(row) + " │")
+
+    lines.append(rule("└", "┴", "┘", flat_widths))
+    return lines
+
+
 def write_csv(path, agg, models):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -436,6 +629,11 @@ def parse_args():
     parser.add_argument("--keep-empty-models", action="store_true",
                         help="keep model rows that have no runs instead of dropping them")
     parser.add_argument("--no-color", action="store_true", help="disable ANSI highlighting")
+    parser.add_argument("--osw-csv", type=Path, default=DEFAULT_OSW_CSV,
+                        help=f"per-run appliance-combination scores from "
+                             f"scripts/score_osw.py (default: {DEFAULT_OSW_CSV})")
+    parser.add_argument("--no-osw", action="store_true",
+                        help="ignore the OSW score file and drop the Aci/Afm/Apd block")
     args = parser.parse_args()
     if not args.result_dirs:
         args.result_dirs = list(DEFAULT_RESULT_DIRS)
@@ -449,6 +647,9 @@ def main():
     if not rows:
         print("No result files found.", file=sys.stderr)
         return 1
+
+    if not args.no_osw:
+        merge_osw(rows, args.osw_csv)
 
     agg = aggregate(rows, args.result_dirs, args.sampling_rate, args.window_sizes, args.seeds)
     if not agg:
@@ -482,6 +683,18 @@ def main():
         footer += f" ({'; '.join(details)})"
     footer += f"; * marks the proposed method{'' if not short else f'; {short} cell(s) short -- see warnings above'}"
     print(footer)
+
+    if not args.no_osw:
+        osw_lines = render_osw(agg, models, use_color)
+        if osw_lines:
+            print()
+            for line in osw_lines:
+                print(line)
+            print(
+                "Appliance-combination metrics over all appliances jointly (Welikala et al., "
+                "IEEE TSG 2019);\n'act' rows exclude OSWs whose ground truth is all-OFF. "
+                f"Source: {args.osw_csv}"
+            )
 
     if args.csv:
         write_csv(args.csv, agg, models)

@@ -7,9 +7,13 @@
 #################################################################################################################
 
 import argparse
-import yaml
 import logging
+import pickle
+from pathlib import Path
+
 import numpy as np
+import pandas as pd
+import yaml
 
 from omegaconf import OmegaConf
 
@@ -23,7 +27,216 @@ from src.helpers.preprocessing import (
     nilmdataset_to_tser,
 )
 from src.helpers.dataset import NILMscaler
-from src.helpers.expes import launch_models_training
+from src.helpers.expes import TCN_ABLATION_MODELS, launch_models_training
+from src.helpers.tcn_ablation import (
+    build_synthetic_windows,
+    extract_activation_segments,
+    fit_kl_basis,
+    load_curated_segments,
+    resolve_synth_app,
+)
+
+#: Activation segments are shared by every appliance and arm of a given
+#: (window_size, seed), but rebuilding them costs a full 5-appliance dataset pass.
+TCN_AUG_CACHE = Path("results/tcn_aug_cache")
+
+
+def _tcn_ablation_segments(expes_config):
+    """Activation segments + duty cycles for the synthetic aggregate.
+
+    `segments_source: curated` swaps the activation WAVEFORMS for the curated store's,
+    while keeping this repo's empirical duty cycles -- curated duty is 0.73-0.99 by
+    construction (its segments *are* on-regions), so reusing it would generate absurdly
+    dense streams and change far more than the thing being ablated.
+    """
+    segments, on_fractions = _repo_segments(expes_config)
+
+    source = str(expes_config.model_kwargs.get("segments_source", "repo"))
+    if source == "repo":
+        return segments, on_fractions
+    if source != "curated":
+        raise ValueError(f"Unknown segments_source '{source}'. Use 'repo' or 'curated'.")
+
+    apps = list(expes_config.synth_aggregate_apps)
+    # REDD's splits are per-appliance, and the repo arm extracts from the run's own train
+    # houses, so draw every appliance's curated activations from those same houses --
+    # that keeps the curated arm matched to the arm it is compared against.
+    houses = (
+        {a: list(expes_config.ind_house_train) for a in apps}
+        if expes_config.dataset == "REDD"
+        else None  # UK-DALE uses the static house-matched map
+    )
+    # Pool-size sweep: cap ONLY the target appliance, so the measured effect is the
+    # diversity of its own activations rather than a thinner synthetic aggregate.
+    cap = expes_config.model_kwargs.get("max_segments")
+    cap_target = expes_config.model_kwargs.get("max_segments_target")
+    if cap_target:
+        tgt = resolve_synth_app(expes_config.app, apps) or expes_config.app
+        cap = {tgt: int(cap_target)}
+        logging.info(
+            "TCN ablation: curated pool for '%s' capped at %d activations.",
+            tgt, int(cap_target),
+        )
+
+    curated = load_curated_segments(
+        apps,
+        sampling_rate=expes_config.sampling_rate,
+        max_segments=cap,
+        seed=expes_config.seed,
+        dataset=expes_config.dataset,
+        houses=houses,
+    )
+    return curated, on_fractions
+
+
+def _repo_segments(expes_config):
+    """
+    Activation segments and duty cycles for every appliance of the synthetic aggregate,
+    cut from the training houses of this repo's own (non-curated) UK-DALE data.
+
+    UK-DALE only: the seeded 80/20 split is applied so most of what the real validation
+    set contains is held out of the augmentation pool. It cannot be held out exactly --
+    this array carries every appliance, so its NaN-dropped window grid does not line up
+    with the single-appliance grid `data_train` comes from (the misalignment documented in
+    scripts/score_osw.py:15). Residual overlap only affects which of the three epochs is
+    selected, not the reported test metrics.
+
+    REDD holds out a whole validation *house* instead (run_one_expe's REDD branch), so
+    there is nothing to carve out of the training windows and the split is skipped.
+    """
+    houses = list(expes_config.ind_house_train)
+    apps = list(expes_config.synth_aggregate_apps)
+    key = "{}_h{}_{}_w{}_s{}".format(
+        expes_config.dataset,
+        "-".join(str(h) for h in houses),
+        expes_config.sampling_rate,
+        expes_config.window_size,
+        expes_config.seed,
+    )
+    cache_file = TCN_AUG_CACHE / f"{key}.pkl"
+
+    if cache_file.is_file():
+        logging.info("TCN ablation: loading cached segments from %s", cache_file)
+        with open(cache_file, "rb") as f:
+            return pickle.load(f)
+
+    logging.info(
+        "TCN ablation: extracting %s activation segments (houses %s) ...",
+        expes_config.dataset, houses,
+    )
+    if expes_config.dataset == "REDD":
+        builder = REDD_DataBuilder(
+            data_path=f"{expes_config.data_path}/REDD/redd.h5",
+            mask_app=apps,
+            sampling_rate=expes_config.sampling_rate,
+            window_size=expes_config.window_size,
+            synth_aggregate_apps=apps,
+        )
+    else:
+        builder = UKDALE_DataBuilder(
+            data_path=f"{expes_config.data_path}/UKDALE/",
+            mask_app=apps,
+            sampling_rate=expes_config.sampling_rate,
+            window_size=expes_config.window_size,
+            synth_aggregate_apps=apps,
+        )
+    arr, st = builder.get_nilm_dataset(house_indicies=houses)
+    if expes_config.dataset != "REDD":
+        arr, st, _, _ = split_train_test_nilmdataset(
+            arr, st, perc_house_test=0.2, seed=expes_config.seed
+        )
+    result = extract_activation_segments(
+        arr, apps, rng=np.random.default_rng(expes_config.seed)
+    )
+
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(cache_file, "wb") as f:
+        pickle.dump(result, f)
+    return result
+
+
+def _dummy_st_date(template, n_rows):
+    """Placeholder timestamps for synthetic windows.
+
+    The TCN arms get a NILMDataset with no exogenous channels (expes.py:155), so st_date
+    is never read for them -- but its length must track the data array.
+    """
+    stamp = template["start_date"].iloc[0]
+    return pd.DataFrame(
+        data=[stamp] * n_rows, index=[-1] * n_rows, columns=["start_date"]
+    )
+
+
+def _prepare_tcn_ablation(expes_config, data_builder, data_train, st_date_train):
+    """
+    Fit the KL basis and, for the augmented arm, build the synthetic training set.
+
+    Runs on unscaled watts and after the train/valid split, so validation and test stay
+    real and the scaler is still fit on real data alone -- scaling is therefore identical
+    across all arms.
+    """
+    mk = expes_config.model_kwargs
+    if not (mk.get("use_kl") or mk.get("augment")):
+        return data_train, st_date_train
+
+    segments, on_fractions = _tcn_ablation_segments(expes_config)
+
+    if mk.get("use_kl"):
+        pooled = [seg for segs in segments.values() for seg in segs]
+        _, basis = fit_kl_basis(pooled, order=int(mk.get("kl_order", 10)))
+        mk.kl_basis = basis.tolist()
+        logging.info(
+            "TCN ablation: KL basis fitted on %d pooled segments.", len(pooled)
+        )
+
+    if mk.get("augment"):
+        apps = list(expes_config.synth_aggregate_apps)
+        target = resolve_synth_app(expes_config.app, apps)
+        if target is None:
+            raise ValueError(
+                f"Target appliance '{expes_config.app}' is not in synth_aggregate_apps "
+                f"{apps}; the augmented arm cannot build its label channel."
+            )
+        if target != expes_config.app:
+            # REDD: `app` is WasherDryer while synth_aggregate_apps lists WashingMachine.
+            # Same physical meter (preprocessing.py:1258).
+            logging.info(
+                "TCN ablation: target '%s' resolved to synth appliance '%s'.",
+                expes_config.app, target,
+            )
+
+        mode = str(mk.get("aug_mode", "replace"))
+        ratio = float(mk.get("aug_ratio", 1.0))
+        n_real = len(data_train)
+        n_aug = n_real if mode == "replace" else max(1, int(round(n_real * ratio)))
+
+        synth = build_synthetic_windows(
+            segments=segments,
+            on_fractions=on_fractions,
+            appliance_names=apps,
+            target_appliance=target,
+            appliance_param=data_builder.appliance_param,
+            compute_status=data_builder._compute_status,
+            n_windows=n_aug,
+            window_size=int(expes_config.window_size),
+            seed=expes_config.seed,
+        )
+        synth_st = _dummy_st_date(st_date_train, n_aug)
+
+        if mode == "replace":
+            data_train, st_date_train = synth, synth_st
+        elif mode == "mix":
+            data_train = np.concatenate((data_train, synth), axis=0)
+            st_date_train = pd.concat([st_date_train, synth_st], axis=0)
+        else:
+            raise ValueError(f"Unknown aug_mode '{mode}'. Use 'replace' or 'mix'.")
+
+        logging.info(
+            "TCN ablation: aug_mode=%s, %d real -> %d training windows.",
+            mode, n_real, len(data_train),
+        )
+
+    return data_train, st_date_train
 
 
 def launch_one_experiment(expes_config: OmegaConf):
@@ -119,6 +332,11 @@ def launch_one_experiment(expes_config: OmegaConf):
 
     logging.info("             ... Done.")
 
+    if expes_config.name_model in TCN_ABLATION_MODELS:
+        data_train, st_date_train = _prepare_tcn_ablation(
+            expes_config, data_builder, data_train, st_date_train
+        )
+
     scaler = NILMscaler(
         power_scaling_type=expes_config.power_scaling_type,
         appliance_scaling_type=expes_config.appliance_scaling_type,
@@ -167,7 +385,7 @@ def launch_one_experiment(expes_config: OmegaConf):
     launch_models_training(tuple_data, scaler, expes_config)
 
 
-def main(dataset, sampling_rate, window_size, appliance, name_model, seed):
+def main(dataset, sampling_rate, window_size, appliance, name_model, seed, result_path=None):
     """
     Main function to load configuration, update it with parameters,
     and launch an experiment.
@@ -179,6 +397,8 @@ def main(dataset, sampling_rate, window_size, appliance, name_model, seed):
         appliance (str): Selected appliance.
         name_model (str): Name of the model to use for the experiment.
         seed (int): Random seed for reproducibility.
+        result_path (str): Optional output root, overriding configs/expes.yaml. Lets an
+            ablation write to its own directory without editing the global config.
     """
 
     # Attempt to convert window_size to int
@@ -254,6 +474,11 @@ def main(dataset, sampling_rate, window_size, appliance, name_model, seed):
     expes_config["seed"] = seed
     expes_config["name_model"] = name_model
 
+    if result_path is not None:
+        expes_config["result_path"] = (
+            result_path if result_path.endswith("/") else result_path + "/"
+        )
+
     # Create directories for results
     result_path = create_dir(expes_config["result_path"])
     result_path = create_dir(f"{result_path}{dataset}_{appliance}_{sampling_rate}/")
@@ -300,6 +525,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--seed", required=True, type=int, help="Random seed for reproducibility."
     )
+    parser.add_argument(
+        "--result_path",
+        required=False,
+        type=str,
+        default=None,
+        help="Output root, overriding result_path in configs/expes.yaml.",
+    )
 
     args = parser.parse_args()
     main(
@@ -309,4 +541,5 @@ if __name__ == "__main__":
         appliance=args.appliance,
         name_model=args.name_model,
         seed=args.seed,
+        result_path=args.result_path,
     )
