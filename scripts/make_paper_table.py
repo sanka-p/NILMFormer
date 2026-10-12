@@ -30,6 +30,10 @@ CACHE = Path("results/runs_cache.csv")
 SAMPLING_RATE = "10s"
 
 # (cache key, printed label with citation)
+#: THE PROPOSED MODEL IS `arm3` (TCN_KL_aug): the in-repo, 3-epoch, one-model-per-
+#: appliance arm with KL features and synthetic augmentation from repo-extracted
+#: activations. Fixed by the user on 2026-10-12; do not substitute another arm without
+#: being asked. The other entries exist only for the head-width and recipe comparisons.
 PROPOSED_CHOICES = {
     # Arm 3 of the ablation ladder: KL + synthetic augmentation built from activations
     # extracted from this repo's own training houses -- NO curated store. Same 3-epoch
@@ -71,7 +75,10 @@ PRESETS = {
         ("TCN", r"Vanilla TCN"),
         ("TCN_KL_scratch", r"TCN + KL"),
         ("TCN_aug_curated", r"TCN + Syn"),
-        ("TCN_KL_aug_curated", r"TCN + KL + Syn"),
+        # Arm 3, so the bottom row of the ladder IS the Proposed row of the SotA table.
+        # It was TCN_KL_aug_curated, which made the two tables disagree cell by cell
+        # (UK-DALE WM F1 21.23 vs 23.12) for what the paper calls the same model.
+        ("TCN_KL_aug", r"TCN + KL + Syn"),
     ],
 }
 CAPTIONS = {
@@ -225,8 +232,9 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--out", type=Path)
     p.add_argument("--preset", choices=sorted(PRESETS), default="sota")
-    p.add_argument("--proposed", choices=sorted(PROPOSED_CHOICES), default="inrepo",
-                   help="which model fills the Proposed row")
+    p.add_argument("--proposed", choices=sorted(PROPOSED_CHOICES), default="arm3",
+                   help="which model fills the Proposed row (default: arm3 = the in-repo "
+                        "3-epoch TCN + KL + Syn arm, TCN_KL_aug)")
     p.add_argument("--delta", action="store_true",
                    help="show each cell's change against the first row in brackets")
     p.add_argument("--color", action="store_true",

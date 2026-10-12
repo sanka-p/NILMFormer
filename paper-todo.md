@@ -279,3 +279,101 @@ leaves may also be mislabelled.
 | `results/deee_aggregate_{mode}_{variant}[_ukdale]_seed0.npz` | the 8 synthetic aggregates |
 | `results/deee_predictions/` | per-timestamp predictions with source provenance |
 | `results/ukdale_scaler_stats.csv` | the recovered UK-DALE normalisation |
+
+### 7.5 Kettle failure is a pure amplitude gate -- diagnosed, fix planned
+
+Raw model output (evaluated with `threshold_small_values=0`, so nothing is suppressed)
+never exceeds **193 W** at the native DEEE amplitude, so the F1 of 0.00 is not a threshold
+artefact -- there is no suppressed-but-correct prediction to recover. Scaling the input:
+
+| input gain | peak W | max prediction | mean pred during kettle-ON |
+|---|---|---|---|
+| 1.0 (native) | 1365 | **193 W** | 5.5 W |
+| 2.0 | 2731 | 2694 W | 752 W |
+| 2.2 (UK-equivalent) | 3004 | 3119 W | 954 W |
+
+Rescaling the input and dividing predictions back recovers **F1 0.00 -> 67.90**
+(BA 78.30, recall 56.6%, precision 84.9%, at gain 2.0 and a 200 W threshold), against a
+UK-DALE reference of 79.37. **The waveform transfers; only the amplitude does not.**
+
+Root cause is structural, not a bug: `NILMscaler` divides every input by one global constant
+(`power_stat2` = 6852 W, `dataset.py:143`), so a 1.4 kW and a 3 kW kettle are different
+inputs rather than one shape at two scales; and kettle `min_threshold: 2000`
+(`preprocessing.py:406`) labels sub-2 kW events OFF *during training*, teaching the model
+not to fire on them.
+
+Planned remedies are tracked as todos in the plan file: (1) inference-time gain calibration
+with a 200 W threshold, (2) derive the gain as a ratio of median on-powers rather than
+tuning it, (3) **amplitude augmentation in `build_synthetic_windows`** as the real fix, (4)
+lower the training threshold alongside (3). Instance normalisation was considered and
+rejected -- it would invalidate the whole existing ablation for one appliance.
+
+Note WashingMachine needs separate treatment: its failure is a *duration* prior
+(`min_on_duration` 1800 s vs a 730 s longest run), which amplitude augmentation does not fix.
+
+
+### 7.6 The ablation's negative cells are NOT statistically significant
+
+Every red cell in the ablation tables was tested against Vanilla TCN with a **paired**
+t-test (pairing on window size and seed, which removes the shared window-size effect),
+n = 9 per cell, two-sided critical |t| = 2.31:
+
+**Not one negative cell reaches significance.** The largest are UK-DALE Kettle +Syn F1
+-10.27 (t = -1.80) and REDD Fridge +Syn F1 -15.81 (t = -1.25).
+
+The test is not underpowered -- the same procedure finds KL's gains strongly significant:
+UK-DALE Kettle +58.10 F1 (t = 7.95), Microwave +36.40 (t = 4.53), Fridge +53.26 (t = 3.91).
+So the asymmetry is real: KL's positives are solid, the negatives are variance.
+
+⚠️ **Do not write per-cell explanations for the red cells.** The run-to-run spread is
+large (UK-DALE WM BA sd ~= 19 points, Kettle F1 sd ~= 22) because the budget is 3 epochs
+and each cell pools 3 window sizes. Report +-sd and state that no regression is
+significant; explaining individual red cells would be over-reading noise.
+
+### 7.7 Synthetic streams discard the appliances' own standby floor
+
+⚠️ **This section replaces an earlier, WRONG version.** That version claimed the synthetic
+stream was 94.7% idle against 48.7% for "real mains", and attributed the gap to unmetered
+external load. Both claims were wrong:
+
+1. The 94.7% came from a diagnostic that called the generator with
+   `on_fractions={app: 0.01}` for EVERY appliance. The real runs use measured duties
+   (fridge **0.342**, not 0.01). With the correct duties the synthetic stream is 59.7% zero.
+2. There is no unmetered load anywhere in this data. The aggregate channel is
+   `synth_aggregate`, the sum of the five submeters, at **both train and test**
+   (`preprocessing.py:1060`), so "non-zero aggregate => one of the five is on" holds by
+   construction. Adding `real_aggregate - synth_aggregate` would inject a component absent
+   at test time and create a new mismatch. **Do not do it.**
+
+**The corrected comparison** (ws=256, fridge window grid):
+
+| | zero-frac | median | mean |
+|---|---|---|---|
+| Test aggregate (5-appliance sum) | **15.7%** | 11 W | 107.1 W |
+| Synthetic stream, real duties | **59.7%** | 0 W | 107.5 W |
+
+Mean power matches almost exactly; only the temporal structure differs. And it is not a
+calibration bug -- the generator hits its per-appliance duty targets (realised/target =
+0.86-1.02 across all five).
+
+**The actual mechanism:** duty is measured above `min_threshold` (fridge 50 W), but between
+compressor cycles the real fridge submeter still reads **5-20 W for 74% of its OFF samples**
+(median 10.5 W) -- its own standby draw. `OffCutoffSampler` crops activations and pads
+between them with **exact zeros**, discarding that floor. So the model trained on synthetic
+data learns "0 W = off", while at test time the appliances themselves never fully switch off.
+
+**This makes the fix legitimate and assumption-preserving:** restore each appliance's own
+off-period floor (sampled from its real OFF distribution) inside the generator, rather than
+padding with zeros. The floor originates from the five appliances, so it is already inside
+`synth_aggregate` at test time -- nothing external is invented.
+
+Figures regenerated with the corrected data; `fig_background_gap` now compares the test
+aggregate against the real-duty synthetic stream.
+
+### 7.8 UK-DALE WM MAE ranks conservatism, not skill
+
+Every arm over-predicts washing machine: E_pred/E_true = 3.05 (Vanilla), 3.87 (+KL),
+5.09 (+Syn), 5.13 (+KL+Syn), with precision 0.01-0.13 and 79-89% of error in OFF periods.
+Vanilla predicts least, so it wins the MAE column while scoring near-worst on F1. On a
+1.1%-duty appliance MAE rewards silence -- that cell should not be quoted as Vanilla being
+better at disaggregation.
