@@ -64,8 +64,10 @@ MODEL_KEY = "TCN_KL_aug_curated"
 KL_ORDER = 10
 
 #: The three DEEE appliances with a UK-DALE counterpart, and the two that have none.
-SCORED_APPLIANCES = ["Kettle", "Microwave", "WashingMachine"]
-SPECIFICITY_APPLIANCES = ["Fridge", "Dishwasher"]
+#: Fridge joined the corpus on 2026-10-09, so four of the five UK-DALE targets now have
+#: a DEEE counterpart. Dishwasher still has none and stays specificity-only.
+SCORED_APPLIANCES = ["Kettle", "Microwave", "WashingMachine", "Fridge"]
+SPECIFICITY_APPLIANCES = ["Dishwasher"]
 #: repo appliance key -> the builder's `app` string.
 APP_KEY = {
     "Kettle": "kettle",

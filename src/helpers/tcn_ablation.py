@@ -141,13 +141,22 @@ class DeviceMultiplexer:
         return self.generators[np.random.randint(len(self.generators))]()
 
 
-def generate_stream(sample_generator, length, expected_active_percentage):
+def generate_stream(sample_generator, length, expected_active_percentage,
+                    off_sampler=None):
     """
     Port of On_Region_Sampler.generate_stream.
 
     Draws crops until `int(length * expected_active_percentage)` active samples are
     reached (right-trimming the last one), then interleaves them with the pieces of a
     single zero vector split at K-1 random points. Output length is exactly `length`.
+
+    `off_sampler(n) -> array of n watts` replaces the EXACT ZEROS between activations
+    with the appliance's own measured standby draw. The original pads with zeros, which
+    teaches a model that "0 W == off"; real submeters do not switch off cleanly (the
+    UK-DALE fridge reads 5-20 W for 74% of its OFF samples, median 10.5 W), so the
+    zero-padded stream is idle 60% of the time against 16% for the real 5-appliance sum.
+    The floor comes from these same appliances, so restoring it adds nothing that is not
+    already present in `synth_aggregate` at test time.
     """
     target_active_length = int(length * expected_active_percentage)
     if target_active_length <= 0:
@@ -166,7 +175,10 @@ def generate_stream(sample_generator, length, expected_active_percentage):
             new_sample = new_sample[: -(current_length - target_active_length)]
         samples.append(new_sample)
 
-    zeros = np.zeros(length - target_active_length)
+    n_off = length - target_active_length
+    zeros = np.zeros(n_off) if off_sampler is None else np.asarray(
+        off_sampler(n_off), dtype=float
+    )
     random_points = np.sort(np.random.randint(zeros.size, size=len(samples) - 1))
     zero_sectors = np.split(zeros, random_points)
     new_signal = np.concatenate(
@@ -299,9 +311,39 @@ def _calibrate_active_fraction(mux, target_duty, threshold, n_probe=64):
     return float(np.clip(target_duty * total / on, 1e-3, 0.9))
 
 
+def fit_off_levels(data, appliance_names, max_samples=200_000, rng=None):
+    """{appliance: 1-D array of its power while OFF}, from the real training windows.
+
+    `data` is [N, 1+M, 2, L] as get_nilm_dataset returns it, so channel 1+2*i is
+    appliance i's power and 2+2*i its status. Sampling the measured OFF distribution is
+    preferred over a constant offset: it reproduces the real floor's spread and its
+    occasional excursions rather than a number someone chose.
+    """
+    rng = rng if rng is not None else np.random.default_rng(0)
+    out = {}
+    for i, app in enumerate(appliance_names):
+        power = data[:, 1 + i, 0, :].ravel()
+        status = data[:, 1 + i, 1, :].ravel()
+        off = power[status == 0]
+        if off.size == 0:
+            logging.warning("TCN ablation: %s has no OFF samples, floor will be zero.", app)
+            out[app] = np.zeros(1)
+            continue
+        if off.size > max_samples:
+            off = off[rng.choice(off.size, size=max_samples, replace=False)]
+        out[app] = off.astype(np.float32)
+        logging.info(
+            "TCN ablation: %s OFF floor -- median %.1f W, mean %.1f W, %.1f%% non-zero "
+            "(n=%d)", app, float(np.median(off)), float(off.mean()),
+            100 * float((off > 0).mean()), off.size,
+        )
+    return out
+
+
 def build_synthetic_windows(
     segments, on_fractions, appliance_names, target_appliance,
     appliance_param, compute_status, n_windows, window_size, seed=0,
+    off_levels=None,
 ):
     """
     Generate `n_windows` synthetic windows shaped like get_nilm_dataset's output.
@@ -333,7 +375,11 @@ def build_synthetic_windows(
         logging.info(
             "TCN ablation: %s duty cycle %.4f -> active fraction %.4f", app, duty, frac
         )
-        streams.append(generate_stream(mux, total_len, frac))
+        pool = None if off_levels is None else off_levels.get(app)
+        off_sampler = None
+        if pool is not None and pool.size:
+            off_sampler = lambda n, _p=pool: np.random.choice(_p, size=n, replace=True)
+        streams.append(generate_stream(mux, total_len, frac, off_sampler=off_sampler))
 
     streams = np.stack(streams, axis=0)
     aggregate = streams.sum(axis=0)

@@ -59,6 +59,13 @@ PRESETS = {
     ],
 }
 
+#: Aliases that resolve to the same physical signal. REDD's washer/dryer is keyed
+#: "WashingMachine" in runs made before 2026-06-22 and "WasherDryer" after, but
+#: REDD_METER_MAP (preprocessing.py:1258-1296) maps BOTH names to the same meter list in
+#: every house, with identical appliance_param and identical splits -- so the rename was
+#: cosmetic and the two are directly comparable.
+APPLIANCE_ALIASES = {"REDD": {"WashingMachine": "WasherDryer"}}
+
 APPS_BY_DATASET = {
     "UKDALE": [
         ("WashingMachine", "WM"), ("Dishwasher", "DW"), ("Kettle", "Kettle"),
@@ -99,7 +106,9 @@ def load(cache, dataset, sampling_rate):
     for row in csv.DictReader(open(cache, newline="")):
         if row["Dataset"] != dataset or row["SamplingRate"] != sampling_rate:
             continue
-        key = (row["Model"], row["Appliance"], row["WindowSize"], row["Seed"])
+        appliance = APPLIANCE_ALIASES.get(dataset, {}).get(row["Appliance"], row["Appliance"])
+        row = dict(row, Appliance=appliance)
+        key = (row["Model"], appliance, row["WindowSize"], row["Seed"])
         rank = priority.get(row.get("SourceDir", ""), len(priority))
         if key not in best or rank < best[key][0]:
             best[key] = (rank, row)
@@ -160,12 +169,7 @@ def render(vals, rows, dataset, sampling_rate, title):
     if lone_cols:
         out += [
             "  (!) " + ", ".join(sorted(lone_cols)) + ": only one method has runs in this "
-            "column, so no",
-            "      best-marker is shown. On REDD the WasherDryer baselines are absent -- "
-            "they were",
-            "      run under the REDD_WashingMachine key before the WashingMachine -> "
-            "WasherDryer",
-            "      config change, so they are not comparable and were not re-run.",
+            "column, so no best-marker is shown.",
             "",
         ]
     out += [

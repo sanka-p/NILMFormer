@@ -88,6 +88,7 @@ UKDALE_DUTY = {
     "kettle": 0.00590,
     "microwave": 0.00442,
     "washing_machine": 0.01119,
+    "fridge": 0.37486,
 }
 
 #: ASSUMED duty cycles for the nine DEEE categories with no UK-DALE counterpart. These are

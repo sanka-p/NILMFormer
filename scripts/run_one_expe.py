@@ -29,6 +29,7 @@ from src.helpers.preprocessing import (
 from src.helpers.dataset import NILMscaler
 from src.helpers.expes import TCN_ABLATION_MODELS, launch_models_training
 from src.helpers.tcn_ablation import (
+    fit_off_levels,
     build_synthetic_windows,
     extract_activation_segments,
     fit_kl_basis,
@@ -49,11 +50,11 @@ def _tcn_ablation_segments(expes_config):
     construction (its segments *are* on-regions), so reusing it would generate absurdly
     dense streams and change far more than the thing being ablated.
     """
-    segments, on_fractions = _repo_segments(expes_config)
+    segments, on_fractions, off_levels = _repo_segments(expes_config)
 
     source = str(expes_config.model_kwargs.get("segments_source", "repo"))
     if source == "repo":
-        return segments, on_fractions
+        return segments, on_fractions, off_levels
     if source != "curated":
         raise ValueError(f"Unknown segments_source '{source}'. Use 'repo' or 'curated'.")
 
@@ -86,7 +87,7 @@ def _tcn_ablation_segments(expes_config):
         dataset=expes_config.dataset,
         houses=houses,
     )
-    return curated, on_fractions
+    return curated, on_fractions, off_levels
 
 
 def _repo_segments(expes_config):
@@ -118,7 +119,13 @@ def _repo_segments(expes_config):
     if cache_file.is_file():
         logging.info("TCN ablation: loading cached segments from %s", cache_file)
         with open(cache_file, "rb") as f:
-            return pickle.load(f)
+            cached = pickle.load(f)
+        if len(cached) == 3:
+            return cached
+        # Pre-off-floor cache: no pools stored. Returning None keeps every existing arm
+        # byte-identical; only the floor arm needs a rebuild (--force-off-levels).
+        logging.info("TCN ablation: cache predates OFF-floor pools; none available.")
+        return cached[0], cached[1], None
 
     logging.info(
         "TCN ablation: extracting %s activation segments (houses %s) ...",
@@ -145,9 +152,14 @@ def _repo_segments(expes_config):
         arr, st, _, _ = split_train_test_nilmdataset(
             arr, st, perc_house_test=0.2, seed=expes_config.seed
         )
-    result = extract_activation_segments(
+    segments, on_fractions = extract_activation_segments(
         arr, apps, rng=np.random.default_rng(expes_config.seed)
     )
+    # Fitted here because this is the only place the real per-appliance submeters are
+    # loaded; the curated arm needs them too, since the curated store carries only a
+    # couple of border-padding samples around each activation and no OFF context.
+    off_levels = fit_off_levels(arr, apps, rng=np.random.default_rng(expes_config.seed))
+    result = (segments, on_fractions, off_levels)
 
     cache_file.parent.mkdir(parents=True, exist_ok=True)
     with open(cache_file, "wb") as f:
@@ -179,7 +191,7 @@ def _prepare_tcn_ablation(expes_config, data_builder, data_train, st_date_train)
     if not (mk.get("use_kl") or mk.get("augment")):
         return data_train, st_date_train
 
-    segments, on_fractions = _tcn_ablation_segments(expes_config)
+    segments, on_fractions, off_levels = _tcn_ablation_segments(expes_config)
 
     if mk.get("use_kl"):
         pooled = [seg for segs in segments.values() for seg in segs]
@@ -205,6 +217,14 @@ def _prepare_tcn_ablation(expes_config, data_builder, data_train, st_date_train)
                 expes_config.app, target,
             )
 
+        if mk.get("restore_off_floor") and off_levels is None:
+            raise RuntimeError(
+                "restore_off_floor is set but no OFF-level pools are available: the "
+                f"segment cache under {TCN_AUG_CACHE} predates them. Delete the matching "
+                "*.pkl so it is rebuilt, or this arm would silently train on the same "
+                "zero-padded stream as TCN_KL_aug_curated."
+            )
+
         mode = str(mk.get("aug_mode", "replace"))
         ratio = float(mk.get("aug_ratio", 1.0))
         n_real = len(data_train)
@@ -213,6 +233,9 @@ def _prepare_tcn_ablation(expes_config, data_builder, data_train, st_date_train)
         synth = build_synthetic_windows(
             segments=segments,
             on_fractions=on_fractions,
+            # Opt-in: without it the generator pads between activations with exact zeros,
+            # which is what every arm up to now trained on.
+            off_levels=off_levels if mk.get("restore_off_floor") else None,
             appliance_names=apps,
             target_appliance=target,
             appliance_param=data_builder.appliance_param,

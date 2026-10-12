@@ -101,6 +101,9 @@ MODEL_LABEL = {
     "TCN_KL_aug_curated_n50": "TCN+KL+Cur+Aug n50",
     "TCN_KL_aug_curated_n100": "TCN+KL+Cur+Aug n100",
     "TCN_KL_aug_curated_n200": "TCN+KL+Cur+Aug n200",
+    # Same arm, but the synthetic stream keeps each appliance's measured standby floor
+    # instead of exact zeros between activations.
+    "TCN_KL_aug_curated_floor": "TCN+KL+Syn (floor)",
     "NILMFormer": "NILMFormer",
     "BERT4NILM": "BERT4NILM",
     "BiLSTM": "BiLSTM",

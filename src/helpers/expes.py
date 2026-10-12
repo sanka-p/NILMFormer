@@ -57,6 +57,7 @@ TCN_ABLATION_MODELS = (
     # curated-pool-size sweep: identical to TCN_KL_aug_curated but with the target
     # appliance's activation pool capped, to locate where curation stops helping.
     "TCN_KL_aug_curated_n20", "TCN_KL_aug_curated_n50", "TCN_KL_aug_curated_n100", "TCN_KL_aug_curated_n200",
+    "TCN_KL_aug_curated_floor",
 )
 
 #: Externally pretrained TCNs loaded from a Lightning checkpoint and never trained
@@ -65,7 +66,8 @@ TCN_ABLATION_MODELS = (
 #: in-repo ablation arms.
 PRETRAINED_TCN_MODELS = ("TCN_KL", "TCN_KL_perapp", "TCN_KL_perapp_nilmformerlike")
 TCN_ABLATION_DATA_KWARGS = (
-    "kl_order", "augment", "aug_mode", "aug_ratio", "segments_source", "max_segments", "max_segments_target",
+    "kl_order", "augment", "aug_mode", "aug_ratio", "segments_source", "max_segments",
+    "max_segments_target", "restore_off_floor",
 )
 
 

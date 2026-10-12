@@ -574,3 +574,29 @@ TCN_aug_curated:
     lr: !!float 1e-4
     wd: !!float 0
     training_in_model: false
+
+# Same as TCN_KL_aug_curated, but the synthetic stream's inter-activation padding
+# carries each appliance's own measured standby draw instead of exact zeros. The
+# zero-padded stream is idle 60% of the time against 16% for the real 5-appliance
+# sum, which teaches the model that 0 W means off; real submeters never reach 0.
+# The floor comes from these same five appliances, so nothing external is added.
+TCN_KL_aug_curated_floor:
+  synth_aggregate_apps:
+    - fridge
+    - washing_machine
+    - kettle
+    - dishwasher
+    - microwave
+  model_kwargs:
+    use_kl: true
+    kl_order: 10
+    augment: true
+    aug_mode: !!str replace
+    aug_ratio: !!float 1.0
+    segments_source: !!str curated
+    max_segments: null
+    restore_off_floor: true
+  model_training_param:
+    lr: !!float 1e-4
+    wd: !!float 0
+    training_in_model: false

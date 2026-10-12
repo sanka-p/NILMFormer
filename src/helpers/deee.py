@@ -37,13 +37,14 @@ import pandas as pd
 DEEE_ROOT = Path("/new-home/e19/e19275/NILM/NILM_datasets/DEEE_SmartHome")
 
 #: DEEE top-level category -> the UK-DALE appliance name it corresponds to.
-#: Everything absent from this map is an UNMETERED DISTRACTOR: it contributes to the
-#: synthetic aggregate and never carries a label. Only these three of the twelve DEEE
-#: categories overlap the UK-DALE target set -- there is no fridge and no dishwasher.
+#: Everything absent from this map is an OUT-OF-VOCABULARY load: it can contribute to the
+#: aggregate but never carries a label. Four of the thirteen DEEE categories overlap the
+#: UK-DALE target set; dishwasher is still missing, so that model stays specificity-only.
 DEEE_CATEGORY_MAP = {
     "Kettle": "kettle",
     "MW": "microwave",
     "Washing Machine": "washing_machine",
+    "Fridge": "fridge",
 }
 
 #: Mirrors UKDALE_DataBuilder.cutoff (preprocessing.py:396). A no-op at DEEE's 1603 W peak,
@@ -178,16 +179,25 @@ def resample_trace(df, sampling_rate="10s"):
 def load_all_sessions(root=DEEE_ROOT, sampling_rate="10s"):
     """(sessions, inventory DataFrame) for the whole corpus."""
     traces = discover_traces(root)
-    n_csv = len(list(Path(root).rglob("*.csv")))
-    logging.info("DEEE: discovered %d traces under %s (%d CSVs on disk)",
-                 len(traces), root, n_csv)
-    # Silence is the failure mode here: a metadata defect drops a trace with only a log
-    # line, and a short corpus looks exactly like a correct one in the results.
-    if len(traces) != n_csv:
+    n_meta = len(list(Path(root).rglob("metadata.json")))
+    on_disk = {p.resolve() for p in Path(root).rglob("*.csv")}
+    used = {t["csv_path"].resolve() for t in traces}
+    logging.info("DEEE: discovered %d traces from %d metadata files under %s",
+                 len(traces), n_meta, root)
+    # Silence is the failure mode: a metadata defect drops a trace with only a log line,
+    # and a short corpus looks exactly like a correct one in the results. Counted against
+    # metadata rather than CSVs so a stray duplicate on disk is reported, not fatal.
+    if len(traces) != n_meta:
         raise RuntimeError(
-            f"DEEE: resolved {len(traces)} traces but {n_csv} CSVs exist under {root}. "
-            "Some metadata.json names a file that could not be resolved -- see the "
-            "warnings above. Fix the metadata or the fallback before scoring anything."
+            f"DEEE: resolved {len(traces)} traces from {n_meta} metadata files under "
+            f"{root}. Some metadata.json names a file that could not be resolved -- see "
+            "the warnings above. Fix it before scoring anything."
+        )
+    for stray in sorted(on_disk - used):
+        logging.warning(
+            "DEEE: %s is on disk but referenced by no metadata.json -- ignored. If it is "
+            "a duplicate, delete it; if it is a real recording, it needs its own session "
+            "directory and metadata.", stray.relative_to(Path(root).resolve()),
         )
 
     sessions, rows = [], []
