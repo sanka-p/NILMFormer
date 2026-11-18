@@ -66,8 +66,9 @@ ARMS = [("TCN_KL_scratch", 1.0), ("TCN_KL_cw1_5", 1.5),
 #: Categorical slots 1-4 of the reference palette, used unmodified and in order.
 #: Lines use the ADJACENT pairlist, which this order passes in both modes. Slots 3
 #: and 4 sit below 3:1 on a light surface, so the relief rule applies: every series
-#: carries a direct label and a distinct marker, and the plotted values are also
-#: written out as CSV. Identity is never colour alone.
+#: carries a distinct marker and is named in the legend, and the plotted values are
+#: also written out as CSV. Identity is never colour alone. (End-of-line text labels
+#: were dropped as redundant with the legend; the markers still carry identity.)
 C_BLUE, C_ORANGE, C_AQUA, C_YELLOW = "#2a78d6", "#eb6834", "#1baf7a", "#eda100"
 INK, INK_2, INK_MUTED = "#0b0b0b", "#52514e", "#8a8982"
 GRID = "#e4e3df"
@@ -157,11 +158,9 @@ def main():
                              if w in data[key][app]])) for w in xs]
         axA.plot(xs, ys, color=colour, marker=marker, markersize=8, linewidth=2,
                  markeredgecolor="white", markeredgewidth=1.2, label=label, zorder=3)
-        axA.annotate(label, (xs[-1], ys[-1]), textcoords="offset points",
-                     xytext=(10, 0), va="center", fontsize=11, color=INK_2)
     axA.set_title("Mean F1 over four appliances", color=INK, pad=10)
     axA.set_ylabel("F1 (%)")
-    axA.set_xlim(0.88, 26)
+    axA.set_xlim(0.88, 11.5)
     _decorate(axA, xs)
     axA.legend(frameon=False, loc="lower left", labelcolor=INK_2)
 
@@ -171,11 +170,9 @@ def main():
         axB.plot(xs[:len(ys)], ys, color=colour, marker=marker, markersize=8,
                  linewidth=2, markeredgecolor="white", markeredgewidth=1.2,
                  label=label, zorder=3)
-        axB.annotate(label, (xs[len(ys) - 1], ys[-1]), textcoords="offset points",
-                     xytext=(10, 0), va="center", fontsize=11, color=INK_2)
     axB.set_title("Per appliance, prevalence + post-processing", color=INK, pad=10)
     axB.set_ylabel("F1 (%)")
-    axB.set_xlim(0.88, 26)
+    axB.set_xlim(0.88, 11.5)
     axB.set_ylim(-4, 100)
     _decorate(axB, xs)
     axB.legend(frameon=False, loc="lower left", labelcolor=INK_2)
