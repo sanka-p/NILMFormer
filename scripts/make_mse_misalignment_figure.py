@@ -1,26 +1,32 @@
 #################################################################################################################
 #
-# @description : Why MSE is the wrong training metric for a detection task.
+# @description : Where a NILM regressor's squared error actually sits.
 #
-# MSE charges for distance in watts; F1 charges for which side of the ON threshold a
-# sample falls on. These are different functions, so most of the squared error a NILM
-# regressor is optimising sits on samples whose CLASSIFICATION IS ALREADY CORRECT --
-# effort that buys no detection performance at all.
+# This figure was built to show that MSE wastes its budget on amplitude error that
+# detection does not care about. IT REFUTED THAT. Measured on REDD/TCN_KL_scratch,
+# ~80% of the test squared error sits on FALSE POSITIVES -- the one thing F1 punishes
+# hardest -- and only 15-33% on samples already classified correctly. MSE and F1 are
+# largely ALIGNED; the dominant failure is confident, high-amplitude firing at the
+# wrong time (FP RMSE 158 W on a fridge whose mean ON power is 192 W; 769 W on the
+# microwave), not a cheap low-amplitude haze.
 #
-# The figure makes that visible rather than asserting it:
-#   Row 1  true vs predicted power, with the ON threshold drawn.
-#   Row 2  the per-sample squared error, filled.
-# Shaded bands mark the samples F1 actually disagrees on. The message is the one the
-# eye gets for free: the error mountains are mostly OUTSIDE the bands.
+# The residual misalignment is narrower than first argued: MSE weights a false
+# positive by amplitude^2 while F1 counts every one equally, so borderline firings
+# stay under-penalised.
+#
+# Row 1  true vs predicted power, with the ON threshold drawn.
+# Row 2  the per-sample squared error, filled.
+# Shaded bands mark the samples F1 actually disagrees on. The message the eye gets for
+# free is the measured one: the error mountains sit INSIDE the bands.
 #
 # Two appliances, because the story inverts with prevalence: Fridge (~23% ON) and
 # Microwave (~1% ON).
 #
 # CAVEAT drawn on the figure: the trainer zeroes predictions below the appliance
 # threshold before saving them (trainer.py:278), so sub-threshold model output is not
-# recoverable here. That suppresses small true-OFF errors, which UNDERSTATES the share
-# of squared error sitting on correctly-classified samples -- the figure's claim is
-# therefore conservative.
+# recoverable here. That erases true-OFF error, which UNDERSTATES the already-correct
+# share and OVERSTATES the false-positive share. The quoted correct-share is therefore
+# a floor, not a point estimate; settling it needs export_raw_predictions.py.
 #
 # Numbers are recomputed from the stored predictions, never transcribed.
 #
@@ -116,7 +122,7 @@ def _bands(ax, t, wrong, label=None):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--root", default="result-redd-fix")
+    p.add_argument("--root", default="result-redd-tod")
     p.add_argument("--arm", default="TCN_KL_scratch")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--apps", nargs="+", default=["Fridge", "Microwave"])
@@ -145,13 +151,19 @@ def main():
         # The headline number is GLOBAL, over the whole test split -- the drawn window
         # is only an illustration of it and must not be mistaken for the evidence.
         share = 100.0 * se[~wrong].sum() / se.sum()
+        fp = (y_st == 0) & (pred_on == 1)
+        fp_share = 100.0 * se[fp].sum() / se.sum()
+        fp_rmse = float(np.sqrt(se[fp].mean())) if fp.any() else 0.0
+        fp_frac = 100.0 * fp.mean()
         span = min(SPAN.get(app, 1800), se.size)
         s0 = a.start if a.start is not None else _pick_window(se, wrong, span)
-        cols.append(dict(app=app, floor=floor, share=share, s0=s0, span=span,
+        cols.append(dict(app=app, floor=floor, share=share, fp_share=fp_share,
+                         fp_rmse=fp_rmse, fp_frac=fp_frac, s0=s0, span=span,
                          y_pow=y_pow, yh=yh, se=se, wrong=wrong, y_st=y_st,
                          on_rate=100.0 * y_st.mean()))
         print(f"{app:<16} {100.0*y_st.mean():>5.2f}% ON  floor {floor:>4.0f} W   "
-              f"{share:.1f}% of squared error on already-correct samples   "
+              f"FP {fp_share:.1f}% of squared error (n={fp_frac:.2f}% of samples, "
+              f"RMSE {fp_rmse:.0f} W); already-correct {share:.1f}%   "
               f"window [{s0}:{s0+span}]")
 
     fig, axes = plt.subplots(2, len(cols), figsize=(7.4 * len(cols), 7.4),
@@ -196,19 +208,21 @@ def main():
                   loc="upper right", frameon=True, framealpha=0.95,
                   edgecolor=INK_3, labelcolor=INK)
         ax.text(0.015, 0.94,
-                f"{c['share']:.1f}% of this appliance's total squared error\n"
-                f"lies on samples F1 already gets right",
+                f"false positives carry {c['fp_share']:.0f}% of the squared error\n"
+                f"from {c['fp_frac']:.1f}% of samples (RMSE {c['fp_rmse']:.0f} W)\n"
+                f"only {c['share']:.0f}% lies where F1 is already satisfied",
                 transform=ax.transAxes, ha="left", va="top", fontsize=11.5,
                 color=INK, bbox=dict(facecolor="white", edgecolor=INK_3,
                                      boxstyle="round,pad=0.38", alpha=0.95))
 
-    fig.suptitle("MSE spends most of its budget where detection gains nothing",
+    fig.suptitle("Squared error concentrates on false positives, "
+                 "where F1 already objects",
                  fontsize=16.5, color=INK, y=0.975)
     fig.text(0.5, 0.005,
              "Shares are over the full test split; the drawn windows are illustrations of it. "
-             "Predictions below the ON threshold are zeroed before storage "
-             "(trainer.py:278), which suppresses small true-OFF errors and makes these "
-             "shares conservative.",
+             "Predictions below the ON threshold are zeroed before storage (trainer.py:278), "
+             "which erases true-OFF error: the already-correct share is a FLOOR and the "
+             "false-positive share a CEILING.",
              ha="center", va="bottom", fontsize=9.5, color=INK_2)
     fig.subplots_adjust(top=0.90, bottom=0.095, left=0.075, right=0.985)
 
