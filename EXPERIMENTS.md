@@ -249,8 +249,42 @@ Microwave (58.3 vs 59.0). The entire fitted advantage is concentrated on **Washi
 (61.5 vs 53.8, +7.7)** and Dishwasher (60.3 vs 58.5, +1.8). So KL structure earns its keep
 only on **long, structured activation cycles**; for a quasi-periodic load (Fridge) or a
 short impulsive one (Microwave), any random projection of the same rank does as well.
-Given the wide per-seed spread on these arms, the 2.7-point aggregate gap is weak evidence
-on its own — the WashingMachine-specific gap is the solid part.
+**Per-seed inspection revises this.** Seed means hide a lot here, so the key comparisons
+were re-run per seed (label-free prior + post-processing):
+
+| appliance | arm | s0 | s1 | s2 | mean | spread |
+|---|---|---|---|---|---|---|
+| Microwave | fitted KL | 63.2 | 56.3 | 57.4 | 59.0 | 6.8 |
+| Microwave | wave64 | 61.0 | 57.2 | 64.3 | 60.8 | 7.1 |
+| Microwave | **dct** | 60.2 | 54.4 | **25.2** | 46.6 | **35.0** |
+| WM | fitted KL | 57.6 | 67.1 | 59.7 | 61.5 | 9.5 |
+| WM | wave64 | 51.7 | 45.7 | 48.4 | 48.6 | 6.0 |
+| WM | rand | **59.5** | 55.6 | 46.1 | 53.8 | 13.4 |
+
+Two conclusions change:
+
+* **The KL-vs-random gap is NOT established.** On WashingMachine the ranges overlap —
+  random's best seed (59.5) exceeds fitted KL's worst (57.6). At n = 3 this is suggestive
+  only. What *is* cleanly separated is fitted KL over the **fixed** bases: against wave64,
+  KL's worst seed (57.6) beats the wavelet's best (51.7), and likewise against DCT (46.6).
+  So the defensible claim is that **fitting beats a fixed basis** on long structured cycles,
+  **not** that it beats an equal-rank random projection. The random control is not
+  convincingly beaten anywhere, which strengthens the reading that basis structure matters
+  less than assumed.
+* **"DCT is worse on Microwave" is the wrong description — DCT is UNSTABLE there.** Two
+  seeds score 60.2 and 54.4, comparable to the reference; the third collapses to 25.2, a
+  35-point spread. The 46.6 mean is an artefact of one failed run. The deficit is a
+  stability problem, not a uniform accuracy gap, and the same caution applies to any arm
+  here reported only as a seed mean.
+
+The wavelet advantage on Microwave (+1.8) also fails this test: wave64 loses on seed 0 and
+wins on seeds 1 and 2, inside a ~7-point within-arm spread. The honest statement is that
+wavelets are **not worse** than KL on Microwave, not that they win — so a per-appliance
+basis-family choice has no measured effect to justify it, consistent with `TCN_KLperapp`
+showing that per-appliance basis *fitting* buys nothing either.
+
+**This makes more seeds the highest-value cheap experiment on the model side.** Several
+rankings in this section rest on n = 3 with gaps smaller than the within-arm spread.
 
 **A random basis beats fixed DCT by 5.6 points**, and beats four of the "principled"
 variants. DCT is last.
@@ -304,7 +338,8 @@ Not science, but each cost real time and would cost it again.
 
 | thread | status |
 |---|---|
-| Basis geometry / DCT / `KLrand` | DONE — fitted KL order 10 wins; DCT last; hybrid ruled out (§7) |
+| Basis geometry / DCT / `KLrand` | DONE — fitted KL wins, DCT last, hybrid ruled out; but KL-vs-random not separated at n=3 (§7) |
+| More seeds on headline arms | now the top model-side item: §7 gaps are smaller than within-arm seed spread |
 | `TCN_KL_act_tod_shuf` control | 3 cells, configured, never run — cheapest open item |
 | UK-DALE | stored predictions exist; blockers: locate `ukdale.h5`, and **valid ⊂ train** makes it a stress test, not a replication |
 | Cross-validated validation split | newly motivated by §5 regret; would unlock the +6-7 post-processing headroom and a steadier threshold |
