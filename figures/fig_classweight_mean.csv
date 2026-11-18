@@ -1,0 +1,13 @@
+scoring,w_off,mean_f1
+stock,1.0,52.81
+stock,1.5,52.25
+stock,3.0,53.78
+stock,10.0,39.41
+prevalence,1.0,59.53
+prevalence,1.5,60.2
+prevalence,3.0,57.44
+prevalence,10.0,41.76
+prev_pp,1.0,67.43
+prev_pp,1.5,68.61
+prev_pp,3.0,68.27
+prev_pp,10.0,54.33
