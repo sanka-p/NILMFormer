@@ -53,6 +53,16 @@ real and survives (WM 31.4 -> 23.3 W).
 **Decision:** default stays unweighted; prevalence matching is the over-firing fix. Keep
 `w_off = 3` only when MAE is the target.
 
+![Mean F1 vs OFF-class weight](figures/fig_classweight.png)
+
+`scripts/make_classweight_figure.py` (values recomputed from the stored predictions, not
+transcribed; written out as `figures/fig_classweight.csv`). The left panel is Elkan's
+equivalence drawn as a picture: at the STOCK threshold the mean rises to a visible peak at
+`w_off = 3` (52.5 -> 53.7), and under prevalence matching + post-processing that peak
+flattens into noise (67.5 -> 68.6 -> 68.3). The right panel shows the collapse at
+`w_off = 10` is ENTIRELY Microwave -- WashingMachine keeps improving (61.5 -> 69.3), which
+is why an appliance-averaged curve alone would have been misleading.
+
 ---
 
 ## 2. Threshold criteria and prevalence matching
