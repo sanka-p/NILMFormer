@@ -73,6 +73,13 @@ C_BLUE, C_ORANGE, C_AQUA, C_YELLOW = "#2a78d6", "#eb6834", "#1baf7a", "#eda100"
 INK, INK_2, INK_MUTED = "#0b0b0b", "#52514e", "#8a8982"
 GRID = "#e4e3df"
 
+#: Keys COLLECTED and written to CSV. `stock_pp` -- Kelly's duration rules applied
+#: at the stock threshold, with no prevalence matching -- is collected but not drawn
+#: in this figure, which keeps its three published lines unchanged. It isolates
+#: post-processing from the threshold change, and is plotted by
+#: scripts/make_postprocess_lines_figure.py.
+ALL_KEYS = ("stock", "stock_pp", "prevalence", "prev_pp")
+
 SCORINGS = [
     ("stock",      "Stock threshold",          C_BLUE,   "o"),
     ("prevalence", "Prevalence-matched",       C_ORANGE, "s"),
@@ -86,7 +93,7 @@ APP_STYLE = [("WashingMachine", "Washing m.", C_BLUE, "o"),
 
 def collect(root):
     """{scoring: {appliance: {w_off: mean F1}}} recomputed from the stored runs."""
-    out = {k: {} for k, _, _, _ in SCORINGS}
+    out = {k: {} for k in ALL_KEYS}
     for app, ws in DEFAULT_GRID.items():
         cfg = build_config("REDD", app, ws)
         y_valid, y_test, floor = ground_truth_states(cfg)
@@ -94,7 +101,7 @@ def collect(root):
         for k in out:
             out[k][app] = {}
         for arm, w_off in ARMS:
-            acc = {k: [] for k, _, _, _ in SCORINGS}
+            acc = {k: [] for k in ALL_KEYS}
             for seed in SEEDS:
                 f = None
                 for key in ({app, "WasherDryer"} if app == "WashingMachine" else {app}):
@@ -110,8 +117,15 @@ def collect(root):
                 if yh_v.size != y_valid.size or yh_t.size != y_test.size:
                     continue
                 # Stock detector: the bare comparison the trainer itself uses.
-                acc["stock"].append(
-                    _timestamp_metrics(y_test, (yh_t > floor).astype(np.int8))["F1"])
+                s0 = (yh_t > floor).astype(np.int8)
+                acc["stock"].append(_timestamp_metrics(y_test, s0)["F1"])
+                # Post-processing at the UNCHANGED stock threshold. No threshold is
+                # re-tuned here: that is the point -- it separates what the duration
+                # rules do from what moving the threshold does. Smoothing at a badly
+                # placed threshold can make things worse (Dishwasher), which the
+                # prevalence-matched columns hide.
+                acc["stock_pp"].append(_timestamp_metrics(
+                    y_test, postprocess_state(s0.copy(), **dur))["F1"])
                 t1 = _pick_threshold(yh_v, rate, floor, None)
                 acc["prevalence"].append(
                     _timestamp_metrics(y_test, (yh_t > t1).astype(np.int8))["F1"])
@@ -184,7 +198,7 @@ def main():
                      arrowprops=dict(arrowstyle="->", color=INK_MUTED, linewidth=1.0))
 
     rows = []
-    for key, label, _, _ in SCORINGS:
+    for key in ALL_KEYS:
         for app in DEFAULT_GRID:
             for w in xs:
                 if w in data[key][app]:
