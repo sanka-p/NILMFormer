@@ -1,0 +1,21 @@
+cell,scoring,w_off,appliance,f1
+Neither,prevalence,1.0,Fridge,88.49
+Neither,prevalence,1.0,Microwave,57.83
+Neither,prevalence,1.0,Dishwasher,46.25
+Neither,prevalence,1.0,WashingMachine,45.57
+Neither,prevalence,1.0,MEAN,59.53
+Class weighting,prevalence,1.5,Fridge,88.02
+Class weighting,prevalence,1.5,Microwave,60.06
+Class weighting,prevalence,1.5,Dishwasher,45.50
+Class weighting,prevalence,1.5,WashingMachine,47.21
+Class weighting,prevalence,1.5,MEAN,60.20
+Post-processing,prev_pp,1.0,Fridge,88.93
+Post-processing,prev_pp,1.0,Microwave,58.99
+Post-processing,prev_pp,1.0,Dishwasher,60.32
+Post-processing,prev_pp,1.0,WashingMachine,61.49
+Post-processing,prev_pp,1.0,MEAN,67.43
+Both,prev_pp,1.5,Fridge,88.43
+Both,prev_pp,1.5,Microwave,61.34
+Both,prev_pp,1.5,Dishwasher,61.82
+Both,prev_pp,1.5,WashingMachine,62.84
+Both,prev_pp,1.5,MEAN,68.61
