@@ -318,6 +318,113 @@ to win on WM/DW while KL won on Microwave/Fridge, suggesting complementary struc
 premise is now refuted — DCT loses everywhere under honest scoring, and is beaten by a
 random basis. Mixing in a basis that underperforms noise is not a promising direction.
 
+### 7.1 What the ten KL channels actually carry
+
+The eigenvalues are computed by `fit_kl_basis` and then **thrown away** by
+`run_one_expe.py:359`, which keeps only the basis. So until now nothing recorded how much
+signal each of the ten channels sees. `scripts/kl_spectrum.py` recovers it from the same
+cached segment pickles the trained arms fitted from (`results/tcn_aug_cache/`), so these
+are the exact bases the runs used, not a re-derivation.
+
+Each segment is standardized before accumulation, so `trace(R) ~= order` and
+`lambda_k / sum(lambda)` reads directly as the share of activation-window variance on
+channel k. REDD splits training houses **per appliance**
+(`configs/datasets.yaml:60-86`), so each appliance fits from a different pool; UK-DALE
+uses one split (h1,3,4,5) for every appliance, so its spectrum varies only with window
+size.
+
+**REDD** (each appliance at its reported window)
+
+| channel | Fridge | Microwave | Dishwasher | WashingMachine |
+|---|---|---|---|---|
+| 0 | 79.27% | 76.08% | 79.81% | 80.90% |
+| 1 | 10.92% | 12.85% | 10.63% | 10.44% |
+| 2 | 3.43% | 4.02% | 3.36% | 3.16% |
+| 3 | 1.73% | 1.92% | 1.71% | 1.52% |
+| 4 | 1.17% | 1.29% | 1.16% | 1.01% |
+| 5 | 0.91% | 1.01% | 0.90% | 0.78% |
+| 6 | 0.76% | 0.86% | 0.74% | 0.65% |
+| 7 | 0.66% | 0.74% | 0.63% | 0.57% |
+| 8 | 0.59% | 0.64% | 0.55% | 0.51% |
+| 9 | 0.55% | 0.59% | 0.51% | 0.47% |
+| **cum. ch 0-1** | **90.19%** | **88.92%** | **90.44%** | **91.33%** |
+| **cum. ch 0-2** | **93.62%** | **92.95%** | **93.80%** | **94.49%** |
+| eff. channels | 2.31 | 2.51 | 2.27 | 2.18 |
+| segments | 1696 | 1474 | 1412 | 1284 |
+
+Cells: Fridge `h3-5-6/w256`, Microwave `h3-5/w128`, Dishwasher `h3-4-5-6/w512`,
+WashingMachine `h3-5-6/w768`.
+
+**UK-DALE** (one split, h1-3-4-5; varies only with window size)
+
+| channel | ws 128 | ws 256 | ws 512 |
+|---|---|---|---|
+| 0 | 63.86% | 70.63% | 74.73% |
+| 1 | 14.55% | 12.55% | 11.20% |
+| 2 | 6.09% | 5.05% | 4.42% |
+| 3 | 3.75% | 2.97% | 2.50% |
+| 4 | 2.69% | 2.07% | 1.70% |
+| 5 | 2.10% | 1.61% | 1.33% |
+| 6 | 1.97% | 1.50% | 1.23% |
+| 7 | 1.83% | 1.35% | 1.09% |
+| 8 | 1.63% | 1.18% | 0.94% |
+| 9 | 1.53% | 1.10% | 0.87% |
+| **cum. ch 0-1** | **78.41%** | **83.17%** | **85.93%** |
+| **cum. ch 0-2** | **84.50%** | **88.22%** | **90.35%** |
+| eff. channels | 3.75 | 3.10 | 2.74 |
+| segments | 15000 | 13809 | 12075 |
+
+"eff. channels" is the participation ratio `exp(-sum p log p)` over the variance shares —
+how many channels the variance effectively occupies, out of 10.
+
+**Four things follow.**
+
+**(a) The default arm compresses nothing, which is why the random control nearly ties.**
+`kl_components` defaults to `kl_order`, so the fitted arm keeps all ten eigenvectors. Ten
+orthonormal vectors spanning a ten-sample window are a **complete rotation** of that
+window — invertible, information-preserving. A random orthonormal basis of the same rank
+spans the identical subspace, and the first conv is a learned linear map across the ten
+channels, so it can undo any rotation. **Fitted KL and `TCN_KLrand` are information-
+equivalent by construction**; they can differ only in conditioning and optimisation path.
+That is a much better explanation of the 2.7-point gap in §7 than "KL structure helps on
+long cycles", and it predicts the gap should not be reliably separable — which is exactly
+what the per-seed table showed.
+
+**(b) The arms that lose are the ones that actually truncate**, and the loss tracks
+retained variance across groups:
+
+| arm | order -> kept | variance retained (REDD range) | mean F1pp | Δ |
+|---|---|---|---|---|
+| TCN_KL_scratch | 10 -> 10 | 100% (rotation, no loss) | **67.4** | — |
+| TCN_KL4 | 10 -> 4 | 94.9-96.0% | 64.9 | −2.5 |
+| TCN_KL64_13 | 64 -> 13 | 89.2-92.9% | 62.1 | −5.3 |
+| TCN_KL64_16 | 64 -> 16 | 91.2-94.3% | 60.3 | −7.1 |
+
+**Caveat: the ordering inverts inside the order-64 pair.** `KL64_16` retains ~2 points
+more variance than `KL64_13` and scores 1.8 F1 *worse*. Given the within-arm seed spreads
+documented above, that inversion is most likely noise, and it is stated rather than
+smoothed over — retained variance predicts the group ranking, not the within-group one.
+
+**(c) UK-DALE's spectrum is flatter than REDD's at every window**, and order 10 is a
+tighter fit there. REDD occupies 2.18-2.51 effective channels; UK-DALE occupies 2.74-3.75,
+and at ws 128 the first three channels hold only 84.5% against REDD's 93-94%. UK-DALE
+pools 12-15k activations over five appliances (kettle included) against REDD's 1.3-1.7k
+over four, so the ensemble is genuinely more diverse. **Consequence for the UK-DALE
+replication: do not assume `kl_order: 10` transfers.** If any cell would benefit from a
+larger order it is UK-DALE at ws 128, and that is now a cheap, specific hypothesis rather
+than a guess.
+
+**(d) The basis is not independent of `window_size`, which it should have been.** The
+sliding fit is over a 10-sample lag window and ought not to care how the data was framed —
+but UK-DALE's channel-0 share climbs monotonically 63.9% -> 70.6% -> 74.7% from ws 128 to
+512. The coupling enters through the segment pool: `extract_activation_segments` cuts from
+the already-windowed array, so the window size decides which activations survive and how
+many (15000 -> 13809 -> 12075). **`kl_order` and `window_size` are therefore not orthogonal
+knobs**, and any order sweep has to be read per window size. Reproduce with
+`python scripts/kl_spectrum.py --canonical` (or without the flag for every cached cell,
+writing `results/kl_spectrum.csv`).
+
+
 ---
 
 ## 8. Infrastructure findings
@@ -354,4 +461,6 @@ Not science, but each cost real time and would cost it again.
 | UK-DALE | stored predictions exist; blockers: locate `ukdale.h5`, and **valid ⊂ train** makes it a stress test, not a replication |
 | Cross-validated validation split | newly motivated by §5 regret; would unlock the +6-7 post-processing headroom and a steadier threshold |
 | Model selection on event F1 | selection, early stopping and LR schedule all watch validation **MSE** (`trainer.py:151-188`); nothing in training knows about detection |
+| `kl_order` on UK-DALE | NEW (§7.1): UK-DALE's spectrum is flatter than REDD's (2.74-3.75 eff. channels vs 2.18-2.51); order 10 may be too small at ws 128 |
+| Multi-task state head (`TCN_KL_dice`) | 12/12 cells done, scored: **64.9** mean F1pp vs reference 67.4. Helps Dishwasher (+2.7), costs Microwave (−7.8). `TCN_KL_dice_tv` 6/12 |
 | `scripts/benchmark_flops.py` | not re-run for the new arms |
